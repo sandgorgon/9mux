@@ -411,6 +411,151 @@ func TestStaleWaitResultIgnoredAfterNavigatingAway(t *testing.T) {
 	}
 }
 
+// ---- session-history table ----
+
+func TestSessionHistoryFileNames(t *testing.T) {
+	dir := func(name string) p9.Stat { return p9.Stat{Name: name, Qid: p9.Qid{Type: p9.QTDIR}} }
+	file := func(name string) p9.Stat { return p9.Stat{Name: name} }
+
+	cases := []struct {
+		name      string
+		stats     []p9.Stat
+		wantNames []string
+		wantOK    bool
+	}{
+		{"empty directory", nil, nil, false},
+		{
+			"unsorted day files come back newest first",
+			[]p9.Stat{file("2026-08-28.nrl"), file("2026-09-07.nrl"), file("2026-08-30.nrl")},
+			[]string{"2026-09-07.nrl", "2026-08-30.nrl", "2026-08-28.nrl"},
+			true,
+		},
+		{"a subdirectory breaks the shape", []p9.Stat{file("2026-09-07.nrl"), dir("2026-09-08.nrl")}, nil, false},
+		{"a non-matching filename breaks the shape", []p9.Stat{file("2026-09-07.nrl"), file("notes.txt")}, nil, false},
+		{"almost-right date shape doesn't match", []p9.Stat{file("2026-9-7.nrl")}, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			names, ok := sessionHistoryFileNames(c.stats)
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
+			}
+			if ok && !reflect.DeepEqual(names, c.wantNames) {
+				t.Errorf("names = %v, want %v", names, c.wantNames)
+			}
+		})
+	}
+}
+
+func TestFormatSessionRow(t *testing.T) {
+	exit0 := 0
+	cases := []struct {
+		name string
+		rec  sessionRecord
+		want []string // substrings that must all appear in the formatted row
+	}{
+		{
+			"exit code",
+			sessionRecord{Host: "Stargazer", Argv: []string{"echo", "hi"}, Exit: &exit0, Kind: "subprocess"},
+			[]string{"Stargazer", "exit:0", "echo hi"},
+		},
+		{
+			"signal takes priority over exit",
+			sessionRecord{Host: "h", Signal: "KILL", Exit: &exit0, Argv: []string{"sleep", "10"}},
+			[]string{"sig:KILL", "sleep 10"},
+		},
+		{
+			"empty argv falls back to kind",
+			sessionRecord{Host: "h", Kind: "inproc"},
+			[]string{"(inproc)"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			row := formatSessionRow(c.rec)
+			for _, want := range c.want {
+				if !strings.Contains(row, want) {
+					t.Errorf("formatSessionRow(%+v) = %q, want it to contain %q", c.rec, row, want)
+				}
+			}
+		})
+	}
+}
+
+func writeSessionFile(t *testing.T, root *client.Fid, parent []string, name string, recs []string) {
+	t.Helper()
+	writeFile(t, root, parent, name, []byte(strings.Join(recs, "\n")+"\n"))
+}
+
+func TestListBrowseCmdSessionHistoryDirectory(t *testing.T) {
+	c, root, _ := newBrowseTestServer(t)
+	mkdir(t, root, nil, "session")
+	mkdir(t, root, []string{"session"}, "history")
+	writeSessionFile(t, root, []string{"session", "history"}, "2026-09-06.nrl", []string{
+		`{"ts_end":"2026-09-06T10:00:00Z","host":"h","argv":["echo","old"],"exit":0,"kind":"subprocess"}`,
+	})
+	writeSessionFile(t, root, []string{"session", "history"}, "2026-09-07.nrl", []string{
+		`{"ts_end":"2026-09-07T10:00:00Z","host":"h","argv":["echo","first"],"exit":0,"kind":"subprocess"}`,
+		`{"ts_end":"2026-09-07T11:00:00Z","host":"h","argv":["echo","second"],"exit":1,"kind":"subprocess"}`,
+	})
+
+	msg := listBrowseCmd(1, c, []string{"session", "history"})()
+	lm, ok := msg.(browseListedMsg)
+	if !ok {
+		t.Fatalf("got %T, want browseListedMsg", msg)
+	}
+	if lm.err != nil {
+		t.Fatalf("unexpected error: %v", lm.err)
+	}
+	if lm.entries != nil || lm.jobRows != nil {
+		t.Fatalf("expected only sessionRows populated, got entries=%v jobRows=%v", lm.entries, lm.jobRows)
+	}
+	if len(lm.sessionRows) != 3 {
+		t.Fatalf("got %d session rows, want 3: %v", len(lm.sessionRows), lm.sessionRows)
+	}
+	// Newest first: 2026-09-07's second record, then its first, then
+	// 2026-08-06's — across-file order (newest file first) and
+	// within-file order (each file's own records reversed) both matter.
+	if !strings.Contains(lm.sessionRows[0], "second") {
+		t.Errorf("row 0 = %q, want the newest record (\"second\")", lm.sessionRows[0])
+	}
+	if !strings.Contains(lm.sessionRows[1], "first") {
+		t.Errorf("row 1 = %q, want the next-newest record (\"first\")", lm.sessionRows[1])
+	}
+	if !strings.Contains(lm.sessionRows[2], "old") {
+		t.Errorf("row 2 = %q, want the oldest record (\"old\")", lm.sessionRows[2])
+	}
+}
+
+// TestLoadSessionRowsStopsBeforeReadingFilesItDoesntNeed confirms the
+// early-stop optimization actually skips older files once limit is
+// reached, mirroring session.ReadRecent's own algorithm: names[1]
+// names a file that was never created on the server, so if
+// loadSessionRows tried to open it (i.e. the early stop didn't
+// trigger), this would fail with an error instead of succeeding.
+func TestLoadSessionRowsStopsBeforeReadingFilesItDoesntNeed(t *testing.T) {
+	c, root, _ := newBrowseTestServer(t)
+	mkdir(t, root, nil, "history")
+	writeSessionFile(t, root, []string{"history"}, "2026-09-07.nrl", []string{
+		`{"ts_end":"2026-09-07T10:00:00Z","host":"h","argv":["a"],"exit":0}`,
+		`{"ts_end":"2026-09-07T11:00:00Z","host":"h","argv":["b"],"exit":0}`,
+		`{"ts_end":"2026-09-07T12:00:00Z","host":"h","argv":["c"],"exit":0}`,
+	})
+	// "2026-09-06.nrl" deliberately doesn't exist on the server.
+	names := []string{"2026-09-07.nrl", "2026-09-06.nrl"}
+
+	rows, err := loadSessionRows(c, []string{"history"}, names, 2)
+	if err != nil {
+		t.Fatalf("expected the walk to stop before reaching the nonexistent file, got error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2 (limit), got %v", len(rows), rows)
+	}
+	if !strings.Contains(rows[0], "c") || !strings.Contains(rows[1], "b") {
+		t.Errorf("got rows %v, want the two newest records (c, then b)", rows)
+	}
+}
+
 func TestLoadPreviewCmd(t *testing.T) {
 	c, root, _ := newBrowseTestServer(t)
 	writeFile(t, root, nil, "hello.txt", []byte("line1\nline2\n"))

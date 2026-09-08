@@ -8,6 +8,14 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- Session-history table: a directory of 9sh's day-sharded
+  `YYYY-MM-DD.nrl` history-log files (as bound at `/session`) renders
+  as an aggregated, newest-first table instead of a raw file listing —
+  the same structural detection the job table already used, extended
+  to a third shape.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added

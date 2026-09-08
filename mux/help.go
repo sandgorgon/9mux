@@ -58,6 +58,8 @@ var keybindingHelp = []string{
 	"                 selected job",
 	"  A job table also auto-refreshes on its own whenever a non-terminal",
 	"  job finishes — no need to press r just to notice that.",
+	"  A directory of day-sharded history logs (9sh's /session) renders",
+	"  as an aggregated, newest-first history table instead.",
 	"  Esc/Backspace  close a file preview",
 	"  PgUp/PgDown/wheel  scroll a file preview",
 }

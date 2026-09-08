@@ -3,15 +3,21 @@
 // this is headed") over three rejected alternatives (a pty-hosted
 // mini-view subcommand, a generic plugin protocol, importing 9sh's Go
 // packages directly). It points a p9/client connection at a 9P root
-// (typically a running 9sh's -listen-unix socket) and renders two
-// well-known shapes: a plain directory listing, and — when a
-// directory's shape matches 9sh's job-control protocol (job/fs.go) —
-// a job table, with a 'k' keybinding to write a kill command to the
-// selected job's ctl file. Every non-terminal job in a job table also
-// gets a blocking wait watch (see waitJobCmd/startJobWaitWatches) that
-// triggers one fresh listing the instant that job finishes — the one
-// deliberate exception to this pane's otherwise strict refresh-on-
-// demand discipline (see README's "Job auto-refresh").
+// (typically a running 9sh's -listen-unix socket) and renders three
+// well-known shapes: a plain directory listing; when a directory's
+// shape matches 9sh's job-control protocol (job/fs.go), a job table
+// with a 'k' keybinding to write a kill command to the selected job's
+// ctl file; and, when a directory's entries all match 9sh's day-sharded
+// session-history log naming (session/session.go's dayShard,
+// YYYY-MM-DD.nrl), a session-history table aggregated across those
+// files. Every non-terminal job in a job table also gets a blocking
+// wait watch (see waitJobCmd/startJobWaitWatches) that triggers one
+// fresh listing the instant that job finishes — the one deliberate
+// exception to this pane's otherwise strict refresh-on-demand
+// discipline (see README's "Job auto-refresh"); the session-history
+// table has no equivalent (an append-only log has no single "resolves
+// once" file to watch), so it stays plain refresh-on-demand like
+// everything else.
 //
 // This is the one deliberate exception to "every pane is Kind-free"
 // (see model.go's own package doc comment): Spec/paneState carry
@@ -23,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,6 +79,13 @@ type browseState struct {
 	jobRows     []string
 	jobIDs      []int
 	jobTerminal []bool
+
+	// session-history mode (see sessionHistoryFileNames): populated
+	// instead of entries/jobRows when the current directory's entries
+	// all match 9sh's day-sharded session-history log naming. Rows are
+	// aggregated across every matching file, newest first, capped at
+	// sessionHistoryLimit — see loadSessionRows.
+	sessionRows []string
 
 	// watchingJobs is the set of job ids this pane currently has an
 	// outstanding waitJobCmd blocked on (see that function) — job ids,
@@ -166,6 +180,16 @@ func listBrowseCmd(id int, c *client.Client, path []string) tui.Cmd {
 				terminal = []bool{}
 			}
 			return browseListedMsg{id: id, path: path, jobRows: rows, jobIDs: rowIDs, jobTerminal: terminal}
+		}
+		if names, ok := sessionHistoryFileNames(stats); ok {
+			rows, err := loadSessionRows(c, path, names, sessionHistoryLimit)
+			if err != nil {
+				return browseListedMsg{id: id, path: path, err: err}
+			}
+			if rows == nil {
+				rows = []string{}
+			}
+			return browseListedMsg{id: id, path: path, sessionRows: rows}
 		}
 		return browseListedMsg{id: id, path: path, entries: stats}
 	}
@@ -284,6 +308,138 @@ func formatJobRowFailed(id int, errText string) string {
 	return fmt.Sprintf("%-4d error: %s", id, errText)
 }
 
+// sessionHistoryPattern matches 9sh's day-sharded session-history log
+// filenames (session/session.go's dayShard: t.Format("2006-01-02") +
+// ".nrl") — the structural signal sessionHistoryFileNames keys off of,
+// not a hardcoded "/session" path, matching jobDirIDs' own "shape, not
+// name" discipline.
+var sessionHistoryPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.nrl$`)
+
+// sessionHistoryFileNames reports whether stats' shape matches 9sh's
+// session-history log directory: one or more regular files, every one
+// matching sessionHistoryPattern, nothing else. Returns their names
+// sorted descending — newest day first, the same filename order
+// loadSessionRows' early-stop walk relies on. An empty directory
+// doesn't match (ok=false): unlike jobDirIDs' "clone" marker file,
+// there's no anchor to distinguish "history, no records logged yet"
+// from "any other empty directory" — falling back to a plain listing
+// showing "(empty)" is a perfectly fine answer for that case anyway.
+func sessionHistoryFileNames(stats []p9.Stat) (names []string, ok bool) {
+	if len(stats) == 0 {
+		return nil, false
+	}
+	for _, s := range stats {
+		if s.Qid.IsDir() || !sessionHistoryPattern.MatchString(s.Name) {
+			return nil, false
+		}
+		names = append(names, s.Name)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	return names, true
+}
+
+// sessionRecord mirrors the JSON shape 9sh's session.Record writes to
+// each line of a day-sharded history file (session/session.go) — the
+// same data-shape-only dependency jobStatus itself already is, not a
+// Go package import.
+type sessionRecord struct {
+	TSStart     time.Time `json:"ts_start"`
+	TSEnd       time.Time `json:"ts_end"`
+	Host        string    `json:"host"`
+	JobID       int       `json:"job_id"`
+	Cwd         string    `json:"cwd,omitempty"`
+	Argv        []string  `json:"argv,omitempty"`
+	Exit        *int      `json:"exit,omitempty"`
+	Signal      string    `json:"signal,omitempty"`
+	Kind        string    `json:"kind"`
+	Detached    bool      `json:"detached,omitempty"`
+	RemoteHost  string    `json:"remote_host,omitempty"`
+	RemoteJobID int       `json:"remote_job_id,omitempty"`
+}
+
+// sessionHistoryLimit caps how many history records loadSessionRows
+// keeps — a glance-able recent-activity view, not a full-history
+// browser, matching 9sh's own removed sessionviewer.go's
+// sessionViewerLimit (200) exactly.
+const sessionHistoryLimit = 200
+
+// loadSessionRows aggregates history across names (already sorted
+// newest-file-first — see sessionHistoryFileNames), formatting up to
+// limit rows, newest first. Mirrors session.ReadRecent's own early-stop
+// algorithm (9sh's session/read.go), ported from local disk reads to
+// p9/client reads: a day's file is itself oldest-first (append-only),
+// so each file's own records are walked backwards, and the walk over
+// files stops the moment limit rows have been gathered rather than
+// reading every historical file just to show the most recent few.
+func loadSessionRows(c *client.Client, path []string, names []string, limit int) ([]string, error) {
+	var rows []string
+	for _, name := range names {
+		recs, err := readSessionFile(c, path, name)
+		if err != nil {
+			return rows, err
+		}
+		for i := len(recs) - 1; i >= 0; i-- {
+			rows = append(rows, formatSessionRow(recs[i]))
+			if len(rows) >= limit {
+				return rows, nil
+			}
+		}
+	}
+	return rows, nil
+}
+
+// readSessionFile reads and parses one day-sharded history file's
+// records, oldest-first (append-only, matching on-disk order). A
+// malformed line is skipped rather than failing the whole file — one
+// bad record shouldn't hide every other one in that day.
+func readSessionFile(c *client.Client, path []string, name string) ([]sessionRecord, error) {
+	filePath := joinPath(append(append([]string{}, path...), name))
+	f, err := c.Open(filePath, p9.OREAD)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	var recs []sessionRecord
+	for line := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec sessionRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		recs = append(recs, rec)
+	}
+	return recs, nil
+}
+
+func formatSessionRow(rec sessionRecord) string {
+	ts := rec.TSEnd
+	if ts.IsZero() {
+		ts = rec.TSStart
+	}
+	when := "?"
+	if !ts.IsZero() {
+		when = ts.Local().Format("2006-01-02 15:04:05")
+	}
+	status := "?"
+	switch {
+	case rec.Signal != "":
+		status = "sig:" + rec.Signal
+	case rec.Exit != nil:
+		status = fmt.Sprintf("exit:%d", *rec.Exit)
+	}
+	argv := strings.Join(rec.Argv, " ")
+	if argv == "" {
+		argv = "(" + rec.Kind + ")"
+	}
+	return fmt.Sprintf("%s  %-10s %-10s %s", when, rec.Host, status, argv)
+}
+
 // previewMaxBytes caps how much of a file loadPreviewCmd reads — a
 // glance-able file preview (status/argv/env/cwd — small config/state
 // files), not a full pager for arbitrarily large content.
@@ -388,6 +544,9 @@ func browseRowCount(b *browseState) int {
 	if b.jobRows != nil {
 		return len(b.jobRows)
 	}
+	if b.sessionRows != nil {
+		return len(b.sessionRows)
+	}
 	n := len(b.entries)
 	if len(b.path) > 0 {
 		n++ // ".." row
@@ -453,6 +612,7 @@ type browseListedMsg struct {
 	jobRows     []string
 	jobIDs      []int
 	jobTerminal []bool
+	sessionRows []string
 	err         error
 }
 type browseMoveMsg struct{ id, delta int }
@@ -515,10 +675,10 @@ func (m Model) handleBrowseMsg(msg tui.Msg) (next Model, cmd tui.Cmd, handled bo
 			b.killMsg = ""
 			if mm.err != nil {
 				b.listErr = mm.err.Error()
-				b.entries, b.jobRows, b.jobIDs, b.jobTerminal = nil, nil, nil, nil
+				b.entries, b.jobRows, b.jobIDs, b.jobTerminal, b.sessionRows = nil, nil, nil, nil, nil
 			} else {
 				b.listErr = ""
-				b.entries, b.jobRows, b.jobIDs, b.jobTerminal = mm.entries, mm.jobRows, mm.jobIDs, mm.jobTerminal
+				b.entries, b.jobRows, b.jobIDs, b.jobTerminal, b.sessionRows = mm.entries, mm.jobRows, mm.jobIDs, mm.jobTerminal, mm.sessionRows
 			}
 			b.cursor = clamp(b.cursor, 0, max0(browseRowCount(b)-1))
 			if pathChanged {
@@ -570,10 +730,11 @@ func (m Model) handleBrowseMsg(msg tui.Msg) (next Model, cmd tui.Cmd, handled bo
 		if p := m.find(mm.id); p != nil && p.browse != nil {
 			b := p.browse
 			switch {
-			case b.client == nil, b.previewPath != "", b.jobRows != nil:
+			case b.client == nil, b.previewPath != "", b.jobRows != nil, b.sessionRows != nil:
 				// Not connected yet; already previewing (Enter has no
-				// further meaning there); or job-table mode, which has
-				// no drill-down yet — see browseState's own doc comment.
+				// further meaning there); or job-table/session-table
+				// mode, neither of which has a drill-down yet — see
+				// browseState's own doc comment.
 			case len(b.path) > 0 && b.cursor == 0:
 				// The ".." row itself (see browseListNode) — same as
 				// Backspace, not "entries[-1]".
@@ -687,6 +848,8 @@ func browseListNode(id int, b *browseState) tui.Node {
 		items = []string{"error: " + b.listErr}
 	case b.jobRows != nil:
 		items = append([]string(nil), b.jobRows...)
+	case b.sessionRows != nil:
+		items = append([]string(nil), b.sessionRows...)
 	default:
 		if len(b.path) > 0 {
 			items = append(items, "..")
