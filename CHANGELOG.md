@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-08
+
 ### Added
 
 - Session-history table: a directory of 9sh's day-sharded
