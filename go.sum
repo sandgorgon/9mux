@@ -4,3 +4,5 @@ github.com/sandgorgon/tui v0.6.0 h1:vVzSoqNLja9BjiyXRI6I31Mqa+VYa+/ZED83w7vVHvY=
 github.com/sandgorgon/tui v0.6.0/go.mod h1:QUNbbETUCwWwSt1Ht6NMmPexXyCa5uKsP1OAVZ03SYo=
 github.com/sandgorgon/tui v0.6.1 h1:O3fCCdQhLJFBc8RU3d1XlFbSmStdxNIF8sC2CyDliZs=
 github.com/sandgorgon/tui v0.6.1/go.mod h1:QUNbbETUCwWwSt1Ht6NMmPexXyCa5uKsP1OAVZ03SYo=
+github.com/sandgorgon/tui v0.6.2 h1:8ATdS1o/rxeeJCEdbfGz7ZzghCVT3C6TbDE0ti2772E=
+github.com/sandgorgon/tui v0.6.2/go.mod h1:QUNbbETUCwWwSt1Ht6NMmPexXyCa5uKsP1OAVZ03SYo=

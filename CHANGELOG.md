@@ -8,6 +8,12 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `sandgorgon/tui` to v0.6.2: retunes the Default theme's
+  Muted/Border/Success/Warning/Error colors for WCAG contrast,
+  colorblind separability, and distinct ANSI-16 fallback slots.
+
 ## [0.1.1] - 2026-09-08
 
 ### Added
