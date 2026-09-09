@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-09
+
 ### Changed
 
 - Bump `sandgorgon/tui` to v0.6.2: retunes the Default theme's
