@@ -1,6 +1,7 @@
 # 9mux
 
 [![CI](https://github.com/sandgorgon/9mux/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/sandgorgon/9mux/actions/workflows/ci.yml?query=branch%3Amaster)
+[![Release](https://img.shields.io/github/v/release/sandgorgon/9mux)](https://github.com/sandgorgon/9mux/releases/latest)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sandgorgon/9mux.svg)](https://pkg.go.dev/github.com/sandgorgon/9mux)
 
 A Plan-9-flavored terminal multiplexer. Almost every pane hosts a real
