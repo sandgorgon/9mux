@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-10
+
 ### Added
 
 - Two spawn-time tokens in a preset's argv: `{id}` (the new pane's own
