@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-09
+
 ### Changed
 
 - Bump `sandgorgon/9p` from v0.7.1 to v0.9.1, and drop the stale
