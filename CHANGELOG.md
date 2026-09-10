@@ -8,6 +8,16 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- Two spawn-time tokens in a preset's argv: `{id}` (the new pane's own
+  id) and `$MUX_PID` (this 9mux process's pid), resolved by plain
+  string substitution once a pane is actually created — not at
+  config-load time like `$SHELL`. Lets a preset such as `kyu = 9sh
+  --listen-unix /tmp/9sh-$MUX_PID-{id}.sock` give every pane its own
+  9P namespace, unique both within one 9mux instance and across
+  multiple concurrently running ones, with no wrapper script needed.
+
 ## [0.1.3] - 2026-09-09
 
 ### Changed
