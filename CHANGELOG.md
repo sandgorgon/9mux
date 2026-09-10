@@ -8,6 +8,23 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `sandgorgon/9p` from v0.7.1 to v0.9.1, and drop the stale
+  `// indirect` marker on it in `go.mod` (`mux/browse.go` has always
+  imported it directly). No API breakage — both intervening releases
+  are additive/opt-in (`client.File.Rename`/`Remove`; optional
+  9P2000.u symlink support via `client.WithUnixExtensions()`, which
+  9mux doesn't call, so wire behavior toward any server is unchanged).
+  Worth taking regardless: v0.8.0 fixed a real path-confinement gap in
+  `examples/dirfs` (a symlink at an intermediate path component could
+  escape the exported root at syscall time) — 9sh's own `/local`/
+  `/env`/`/config`/`/session` namespace binds that 9mux's browsing
+  pane points at go through that exact backend. Matches 9sh's own
+  bump to v0.9.1 in v0.4.25.
+- `sandgorgon/tui` checked against upstream — already at the latest
+  tag (`v0.6.2`, matching go.mod); no bump needed.
+
 ## [0.1.2] - 2026-09-09
 
 ### Changed
