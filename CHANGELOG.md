@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-10
+
 ### Changed
 
 - Bump `sandgorgon/tui` from v0.6.2 to v0.7.0: adds `style.Theme.Chrome`
