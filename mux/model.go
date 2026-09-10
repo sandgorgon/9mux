@@ -1131,6 +1131,10 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 			// navigation. ReleaseKey is left at its default (Ctrl+\), the
 			// way out to Tab-navigate title bars/buttons again.
 			WantsRawTab: true,
+			// Themes the "[scrollback N/M]" indicator Terminal draws
+			// while scrolled back, so it matches the rest of 9mux's
+			// chrome instead of rendering unstyled.
+			Theme: m.theme,
 		}).Key(paneKey(id, "term"))
 	}
 

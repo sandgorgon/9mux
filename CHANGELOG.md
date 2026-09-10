@@ -19,6 +19,19 @@ once a first tagged release is cut.
   leaving title-bar text at the terminal's own default foreground
   rather than an explicit theme color, so there's nothing here to
   adopt. Confirmed no other file in the module changed.
+- Bump `sandgorgon/tui` from v0.7.0 to v0.8.0: `widget.Terminal` gains
+  scrollback viewing — a filed-upstream fix for
+  [sandgorgon/tui#38](https://github.com/sandgorgon/tui/issues/38),
+  which pointed out that `vt.Screen`'s scrollback (up to 10,000
+  primary-screen lines) was collected but had no consumer. Every pane
+  can now scroll its history via mouse wheel or PageUp/PageDown
+  (skipped on the alt screen, so vim/htop/less keep managing their own
+  scrolling), with a "[scrollback N/M]" indicator while scrolled back
+  and a snap back to live on new output or the next forwarded
+  keystroke — no 9mux-side wiring needed for the behavior itself.
+  Passed `m.theme` into the pane `Terminal`'s new `Theme` option
+  (mux/model.go) so that indicator renders in 9mux's own chrome colors
+  via `Theme.ChromeText()` instead of the zero-value fallback.
 
 ## [0.1.5] - 2026-09-10
 
