@@ -8,6 +8,18 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `sandgorgon/tui` from v0.6.2 to v0.7.0: adds `style.Theme.Chrome`
+  and `Theme.ChromeText()` (a contrast-guaranteed style for text
+  painted on a `BorderStyle()`-tinted chrome panel) and retunes
+  `Border`'s RGB slightly in both the dark and light default themes.
+  No API breakage for 9mux — `barStyle` already sidesteps the
+  Muted-on-Border contrast problem `ChromeText` exists to fix by
+  leaving title-bar text at the terminal's own default foreground
+  rather than an explicit theme color, so there's nothing here to
+  adopt. Confirmed no other file in the module changed.
+
 ## [0.1.5] - 2026-09-10
 
 ### Added
