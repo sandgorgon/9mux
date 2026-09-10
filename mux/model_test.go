@@ -2,6 +2,7 @@ package mux
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,9 +37,9 @@ var testPresets = []config.Preset{{Name: "a", Argv: []string{"true"}}, {Name: "b
 // testSpec is a Spec a test doesn't care about the actual process
 // behavior of — "true" exits immediately and is on every system's
 // PATH. Tests that need real, observable pty output (a live READY
-// marker, etc.) build their own Spec with a real exec.Command instead.
+// marker, etc.) build their own Spec with a real argv instead.
 func testSpec(title string) Spec {
-	return Spec{Title: title, Command: exec.Command("true")}
+	return Spec{Title: title, Argv: []string{"true"}}
 }
 
 func newTestModel(specs ...Spec) Model {
@@ -237,9 +238,9 @@ func TestClosingLastPaneQuits(t *testing.T) {
 // children must not disturb its remaining sibling's retained state.
 func TestClosingOnePaneKeepsSiblingAlive(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	survivor := exec.Command("sh", "-c", "echo SURVIVOR; read x; echo GOT:$x")
-	doomed := exec.Command("sh", "-c", "echo DOOMED; read x; echo GOT:$x")
-	m := newTestModel(Spec{Title: "survivor", Command: survivor}, Spec{Title: "doomed", Command: doomed})
+	survivor := []string{"sh", "-c", "echo SURVIVOR; read x; echo GOT:$x"}
+	doomed := []string{"sh", "-c", "echo DOOMED; read x; echo GOT:$x"}
+	m := newTestModel(Spec{Title: "survivor", Argv: survivor}, Spec{Title: "doomed", Argv: doomed})
 	doomedID := m.panes[1].id
 
 	app := tui.NewApp(m, 40, 16)
@@ -268,9 +269,9 @@ func TestClosingOnePaneKeepsSiblingAlive(t *testing.T) {
 // closes a pane only once focus has reached its title bar.
 func TestTitleBarXKeyClosesPane(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	first := exec.Command("sh", "-c", "echo FIRSTPANE; read x")
-	second := exec.Command("sh", "-c", "echo SECONDPANE; read x")
-	m := newTestModel(Spec{Title: "first", Command: first}, Spec{Title: "second", Command: second})
+	first := []string{"sh", "-c", "echo FIRSTPANE; read x"}
+	second := []string{"sh", "-c", "echo SECONDPANE; read x"}
+	m := newTestModel(Spec{Title: "first", Argv: first}, Spec{Title: "second", Argv: second})
 
 	app := tui.NewApp(m, 40, 16)
 	defer app.Close()
@@ -716,8 +717,8 @@ func TestPaneTitleShowsFKeyLabel(t *testing.T) {
 
 func TestSplittingLiveShellPanePreservesItsProcess(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	cmd := exec.Command("sh", "-c", "echo READY; read x; echo GOT:$x")
-	m := newTestModel(Spec{Title: "test", Command: cmd})
+	cmd := []string{"sh", "-c", "echo READY; read x; echo GOT:$x"}
+	m := newTestModel(Spec{Title: "test", Argv: cmd})
 	id := m.panes[0].id
 
 	app := tui.NewApp(m, 40, 16)
@@ -815,8 +816,8 @@ func TestClosingZoomedPaneClearsZoom(t *testing.T) {
 // TestMinimizeKeepsProcessAliveAndStatePreserved.
 func TestZoomingAPaneKeepsSiblingProcessAlive(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	cmd := exec.Command("sh", "-c", "echo READY; read x; echo GOT:$x")
-	m := newTestModel(Spec{Title: "shell", Command: cmd})
+	cmd := []string{"sh", "-c", "echo READY; read x; echo GOT:$x"}
+	m := newTestModel(Spec{Title: "shell", Argv: cmd})
 	shellID := m.panes[0].id
 
 	app := tui.NewApp(m, 40, 10)
@@ -936,8 +937,8 @@ func TestClickedRecognizesEnterSpaceAndLeftClick(t *testing.T) {
 
 func TestMinimizeKeepsProcessAliveAndStatePreserved(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	cmd := exec.Command("sh", "-c", "echo READY; read x; echo GOT:$x")
-	m := newTestModel(Spec{Title: "test", Command: cmd})
+	cmd := []string{"sh", "-c", "echo READY; read x; echo GOT:$x"}
+	m := newTestModel(Spec{Title: "test", Argv: cmd})
 	id := m.panes[0].id
 
 	app := tui.NewApp(m, 40, 10)
@@ -966,11 +967,11 @@ func TestMinimizeKeepsProcessAliveAndStatePreserved(t *testing.T) {
 // no-op — both panes' live markers must stay visible.
 func TestHorizontalSplitPaneCannotMinimize(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	a := exec.Command("sh", "-c", "echo MARKERA; read x")
-	b := exec.Command("sh", "-c", "echo MARKERB; read x")
-	m := newTestModel(Spec{Title: "a", Command: a})
+	a := []string{"sh", "-c", "echo MARKERA; read x"}
+	b := []string{"sh", "-c", "echo MARKERB; read x"}
+	m := newTestModel(Spec{Title: "a", Argv: a})
 	id := m.panes[0].id
-	m, _ = m.splitPane(id, layout.Horizontal, Spec{Title: "b", Command: b})
+	m, _ = m.splitPane(id, layout.Horizontal, Spec{Title: "b", Argv: b})
 
 	app := tui.NewApp(m, 80, 16)
 	defer app.Close()
@@ -999,8 +1000,8 @@ func TestHorizontalSplitPaneCannotMinimize(t *testing.T) {
 // counterpart to TestMinimizeKeepsProcessAliveAndStatePreserved.
 func TestAddingSecondPaneKeepsFirstPaneAlive(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
-	cmd := exec.Command("sh", "-c", "echo READY; read x; echo GOT:$x")
-	m := newTestModel(Spec{Title: "first", Command: cmd})
+	cmd := []string{"sh", "-c", "echo READY; read x; echo GOT:$x"}
+	m := newTestModel(Spec{Title: "first", Argv: cmd})
 
 	app := tui.NewApp(m, 40, 10)
 	defer app.Close()
@@ -1020,8 +1021,8 @@ func TestAddingSecondPaneKeepsFirstPaneAlive(t *testing.T) {
 
 func TestExitedPaneShowsIndicatorAfterEvent(t *testing.T) {
 	skipUnlessOnPath(t, "true")
-	cmd := exec.Command("true")
-	m := newTestModel(Spec{Title: "test", Command: cmd})
+	cmd := []string{"true"}
+	m := newTestModel(Spec{Title: "test", Argv: cmd})
 
 	app := tui.NewApp(m, 40, 10)
 	defer app.Close()
@@ -1039,6 +1040,35 @@ func TestExitedPaneShowsIndicatorAfterEvent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("exited indicator never appeared:\n%s", app.Buffer().String())
+}
+
+// TestExpandSpawnTokensSubstitutesIDAndMuxPID pins the plain-string
+// substitution expandSpawnTokens does for a preset's {id} and $MUX_PID
+// tokens — no shell involved, so this must work by literal text
+// replacement alone.
+func TestExpandSpawnTokensSubstitutesIDAndMuxPID(t *testing.T) {
+	argv := []string{"9sh", "--listen-unix", "/tmp/9sh-$MUX_PID-{id}.sock"}
+	got := expandSpawnTokens(argv, 7)
+	want := []string{"9sh", "--listen-unix", "/tmp/9sh-" + strconv.Itoa(muxPID) + "-7.sock"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expandSpawnTokens(%v, 7) = %v, want %v", argv, got, want)
+		}
+	}
+}
+
+// TestNewPaneStateExpandsSpawnTokens confirms a preset-sourced Spec's
+// {id} token is resolved against the pane's own id once newPaneState
+// actually builds the exec.Cmd — the whole reason Spec carries Argv,
+// not a pre-built *exec.Cmd, is so this substitution can happen here,
+// after an id exists, rather than back when SpecFromPreset ran.
+func TestNewPaneStateExpandsSpawnTokens(t *testing.T) {
+	s := Spec{Title: "kyu", Argv: []string{"9sh", "--listen-unix", "/tmp/9sh-{id}.sock"}}
+	p := newPaneState(42, s)
+	want := "/tmp/9sh-42.sock"
+	if got := p.command.Args[2]; got != want {
+		t.Fatalf("newPaneState(42, ...).command.Args[2] = %q, want %q", got, want)
+	}
 }
 
 func forceRenders(app *tui.App, n int) {

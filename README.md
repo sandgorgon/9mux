@@ -62,6 +62,25 @@ value that can't be known until run time. A fresh install gets just
 `shell = $SHELL` (see `config.EnsureDefault`), so 9mux is immediately
 useful with zero configuration even without 9sh installed at all.
 
+Two more tokens expand in a preset's argv, both resolved fresh for
+each pane rather than once at config-load time like `$SHELL` above:
+`{id}` is that pane's own id (unique within this 9mux process) and
+`$MUX_PID` is this 9mux process's own pid (unique across multiple
+concurrently running 9mux instances). Together they're enough to give
+every pane its own 9P namespace — e.g. a preset like
+
+```
+kyu = 9sh --listen-unix /tmp/9sh-$MUX_PID-{id}.sock
+```
+
+spawns each `kyu` pane pointed at its own socket, so a `browse
+unix:/tmp/9sh-<pid>-<id>.sock` preset (or a manually-run `9p` client)
+can address one specific pane's namespace instead of whichever `9sh`
+happened to bind a shared default socket last. Plain string
+substitution, not shell expansion — argv is exec'd directly, no shell
+in between — so it works the same whether or not `sh` is even
+installed.
+
 Each preset gets a `+ <name>` control-strip button. The title bar's
 `d`/`r` split flow picks a preset by **digit** (1-9, in config order),
 not a per-preset letter — see "Design notes" for why.

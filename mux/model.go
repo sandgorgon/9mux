@@ -42,7 +42,9 @@ package mux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,12 +59,20 @@ import (
 )
 
 // Spec describes a pane to create, at startup (New) or later (AddPane):
-// a title plus exactly one of Command (a pty-hosted process — the
-// common case) or Browse (a 9P-browsing pane — see browse.go).
+// a title plus exactly one of Argv (a pty-hosted process — the common
+// case) or Browse (a 9P-browsing pane — see browse.go). Argv is a
+// template, not a ready-to-run command: it's only turned into an
+// *exec.Cmd by newPaneState, once a pane id actually exists, since
+// spawn-time tokens ({id}, $MUX_PID — see expandSpawnTokens) need that
+// id to expand. This is why Spec can't just carry a pre-built
+// *exec.Cmd the way it used to — SpecFromPreset runs well before any
+// pane id exists (on every control-strip render, and inside the
+// digit-key handler), so nothing at that point knows what to expand
+// {id} to.
 type Spec struct {
-	Title   string
-	Command *exec.Cmd
-	Browse  *BrowseSpec
+	Title  string
+	Argv   []string
+	Browse *BrowseSpec
 }
 
 // SpecFromPreset builds a Spec from a configured preset (see package
@@ -72,7 +82,30 @@ func SpecFromPreset(p config.Preset) Spec {
 	if p.Browse != nil {
 		return Spec{Title: p.Name, Browse: &BrowseSpec{Network: p.Browse.Network, Addr: p.Browse.Addr}}
 	}
-	return Spec{Title: p.Name, Command: exec.Command(p.Argv[0], p.Argv[1:]...)}
+	return Spec{Title: p.Name, Argv: p.Argv}
+}
+
+// muxPID is 9mux's own process id, substituted for $MUX_PID by
+// expandSpawnTokens — lets a preset give each pane a socket path
+// that's unique across multiple concurrently running 9mux instances,
+// not just across panes within one of them (that part comes from
+// {id}).
+var muxPID = os.Getpid()
+
+// expandSpawnTokens resolves the two spawn-time tokens a preset's argv
+// may contain: {id} (this pane's own id, unique within this 9mux
+// instance) and $MUX_PID (this 9mux process's pid, unique across
+// instances). Plain string substitution, not shell expansion — argv is
+// still exec'd directly (see newPaneState), so this needs no shell and
+// can't be confused by shell quoting rules.
+func expandSpawnTokens(argv []string, id int) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		a = strings.ReplaceAll(a, "{id}", strconv.Itoa(id))
+		a = strings.ReplaceAll(a, "$MUX_PID", strconv.Itoa(muxPID))
+		out[i] = a
+	}
+	return out
 }
 
 type paneState struct {
@@ -278,10 +311,13 @@ func (m Model) withNewPane(s Spec) Model {
 // withNewPane (top-level "+" additions) and splitPane (splitting an
 // existing pane), so both construct a pane identically.
 func newPaneState(id int, s Spec) *paneState {
-	p := &paneState{id: id, title: s.Title, command: s.Command}
+	p := &paneState{id: id, title: s.Title}
 	if s.Browse != nil {
 		p.browse = &browseState{network: s.Browse.Network, addr: s.Browse.Addr}
+		return p
 	}
+	argv := expandSpawnTokens(s.Argv, id)
+	p.command = exec.Command(argv[0], argv[1:]...)
 	return p
 }
 
