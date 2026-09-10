@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-10
+
 ### Added
 
 - Browse companions: a command preset can declare a paired 9P address
