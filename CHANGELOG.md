@@ -8,6 +8,22 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- Browse companions: a command preset can declare a paired 9P address
+  via a `<name>.browse = unix:<path>`/`tcp:<host:port>` line right
+  after it, using the same `{id}`/`$MUX_PID` spawn-time tokens as its
+  own argv. Both resolve together against that pane's own id, so the
+  companion address always matches the socket that pane's process
+  actually bound — e.g. `kyu = 9sh --listen-unix
+  /tmp/9sh-$MUX_PID-{id}.sock` paired with `kyu.browse =
+  unix:/tmp/9sh-$MUX_PID-{id}.sock`. That pane's title bar gets a new
+  `b` action (shown in its hint only when a companion is set), which
+  starts the same two-step flow as `d`/`r`: `b` then `d`/`r` for
+  direction (anything else cancels) splits off a browsing pane pointed
+  at it — no hand-synced second `browse` preset, no copying pid/id by
+  hand.
+
 ## [0.1.4] - 2026-09-10
 
 ### Added
