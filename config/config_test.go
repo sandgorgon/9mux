@@ -52,6 +52,75 @@ func TestLoadParsesBrowsePreset(t *testing.T) {
 	}
 }
 
+// TestLoadAttachesBrowseCompanionToPrecedingPreset confirms a
+// "<name>.browse = ..." line right after a command preset named
+// <name> attaches a BrowseCompanion to that preset instead of
+// appending a new one.
+func TestLoadAttachesBrowseCompanionToPrecedingPreset(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "9mux")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config")
+	contents := "kyu = 9sh --listen-unix /tmp/9sh-$MUX_PID-{id}.sock\n" +
+		"kyu.browse = unix:/tmp/9sh-$MUX_PID-{id}.sock\n" +
+		"shell = /bin/sh\n"
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	presets, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(presets) != 2 {
+		t.Fatalf("got %d presets, want 2 (the .browse line shouldn't add one): %+v", len(presets), presets)
+	}
+
+	kyu := presets[0]
+	if kyu.Name != "kyu" || kyu.BrowseCompanion == nil {
+		t.Fatalf("kyu preset: got %+v, want a BrowseCompanion attached", kyu)
+	}
+	want := "/tmp/9sh-$MUX_PID-{id}.sock"
+	if kyu.BrowseCompanion.Network != "unix" || kyu.BrowseCompanion.Addr != want {
+		t.Errorf("kyu.BrowseCompanion: got %+v, want {unix %s}", kyu.BrowseCompanion, want)
+	}
+
+	shell := presets[1]
+	if shell.Name != "shell" || shell.BrowseCompanion != nil {
+		t.Errorf("shell preset: got %+v, want no BrowseCompanion", shell)
+	}
+}
+
+// TestLoadSkipsBrowseCompanionForUnknownBase confirms a "<name>.browse
+// = ..." line is silently dropped (not turned into its own preset)
+// when <name> hasn't already been parsed as a command preset — same
+// lenient-skip discipline as a malformed browse target.
+func TestLoadSkipsBrowseCompanionForUnknownBase(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "9mux")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config")
+	// ghost.browse appears with no preceding "ghost = ..." line.
+	contents := "ghost.browse = unix:/tmp/ghost.sock\nshell = /bin/sh\n"
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	presets, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(presets) != 1 || presets[0].Name != "shell" {
+		t.Fatalf("got %+v, want only the shell preset to survive", presets)
+	}
+}
+
 func TestLoadSkipsMalformedBrowseTarget(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "9mux")

@@ -23,6 +23,16 @@ type Preset struct {
 	Name   string
 	Argv   []string
 	Browse *BrowseTarget
+
+	// BrowseCompanion is a second 9P address a command preset (Argv
+	// set) can declare alongside itself, via a "<name>.browse = ..."
+	// line right after the base preset — e.g. a "kyu" preset spawning
+	// 9sh with a {id}/$MUX_PID-templated -listen-unix socket can pair
+	// a "kyu.browse = unix:<same templated path>" line so that pane's
+	// title bar can open a browsing pane pointed at its own socket
+	// (mux's 'b' key) without a separate, hand-synced "browse" preset
+	// guessing the path. Always nil on a Browse preset itself.
+	BrowseCompanion *BrowseTarget
 }
 
 // BrowseTarget is a preset that opens a 9P-browsing pane instead of a
@@ -87,9 +97,14 @@ func EnsureDefault() error {
 // line (blank lines and "#"-prefixed comments skipped). A bare $SHELL
 // token in a value expands to the real $SHELL env var (falling back to
 // /bin/sh if unset) — the one piece of built-in expansion, since it's
-// the only value that can't be known until run time. A missing file,
-// or one with no valid presets, falls back to defaultPresets() rather
-// than leaving 9mux with nothing to offer.
+// the only value that can't be known until run time. A "<name>.browse
+// = unix:<path>"/"tcp:<host:port>" line right after a command preset
+// named <name> attaches a BrowseCompanion to it instead of adding a
+// new preset (see Preset.BrowseCompanion) — silently ignored if <name>
+// hasn't been seen yet as a command preset, same lenient-skip
+// discipline as everything else here. A missing file, or one with no
+// valid presets, falls back to defaultPresets() rather than leaving
+// 9mux with nothing to offer.
 func Load() ([]Preset, error) {
 	path, err := file()
 	if err != nil {
@@ -105,6 +120,7 @@ func Load() ([]Preset, error) {
 	defer f.Close()
 
 	var presets []Preset
+	byName := make(map[string]int) // command-preset name -> index in presets
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -115,20 +131,34 @@ func Load() ([]Preset, error) {
 		if !ok {
 			continue
 		}
+		name = strings.TrimSpace(name)
 		value = strings.TrimSpace(value)
+		if base, ok := strings.CutSuffix(name, ".browse"); ok {
+			idx, ok := byName[base]
+			if !ok {
+				continue
+			}
+			target, err := parseBrowseTarget(value)
+			if err != nil {
+				continue
+			}
+			presets[idx].BrowseCompanion = target
+			continue
+		}
 		if rest, ok := strings.CutPrefix(value, "browse "); ok {
 			target, err := parseBrowseTarget(strings.TrimSpace(rest))
 			if err != nil {
 				continue
 			}
-			presets = append(presets, Preset{Name: strings.TrimSpace(name), Browse: target})
+			presets = append(presets, Preset{Name: name, Browse: target})
 			continue
 		}
 		argv := expandArgv(value)
 		if len(argv) == 0 {
 			continue
 		}
-		presets = append(presets, Preset{Name: strings.TrimSpace(name), Argv: argv})
+		presets = append(presets, Preset{Name: name, Argv: argv})
+		byName[name] = len(presets) - 1
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err

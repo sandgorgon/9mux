@@ -514,6 +514,115 @@ func TestSplitKeysOnTitleBar(t *testing.T) {
 	}
 }
 
+// TestTitleBarBKeyOpensBrowseCompanion drives the real input path (not
+// a synthetic Update(splitPaneMsg{...}) call) to confirm 'b' on a
+// pane's title bar splits off a browsing pane pointed at that pane's
+// already-resolved BrowseCompanion address, via the same two-step
+// flow beginSplitMsg/splitPaneMsg use for 'd'/'r' — 'b' only starts
+// it (awaitingBrowseSplit), and a following 'd' or 'r' actually
+// splits, picking the sibling's direction the way the user asks.
+func TestTitleBarBKeyOpensBrowseCompanion(t *testing.T) {
+	s := Spec{
+		Title:           "kyu",
+		Argv:            []string{"true"},
+		BrowseCompanion: &BrowseSpec{Network: "unix", Addr: "/tmp/9mux-test-{id}.sock"},
+	}
+	m := newTestModel(s)
+
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+	forceRenders(app, 1)
+
+	if buf := app.Buffer().String(); !strings.Contains(buf, "x/d/r/z/+/-/b") {
+		t.Fatalf("expected the 'b' hint on a pane with a BrowseCompanion:\n%s", buf)
+	}
+
+	for range m.controlStripFocusables() {
+		app.HandleInput(input.KeyEvent{Key: input.KeyTab})
+	}
+	for _, cmd := range app.HandleInput(input.KeyEvent{Rune: 'b'}) {
+		if cmd != nil {
+			app.Dispatch(cmd())
+		}
+	}
+	forceRenders(app, 1)
+
+	if buf := app.Buffer().String(); !strings.Contains(buf, "browse split: d/r (else cancel)") {
+		t.Fatalf("expected the browse-split prompt after 'b':\n%s", buf)
+	}
+
+	for _, cmd := range app.HandleInput(input.KeyEvent{Rune: 'r'}) {
+		if cmd != nil {
+			app.Dispatch(cmd())
+		}
+	}
+	forceRenders(app, 2)
+
+	buf := app.Buffer().String()
+	if n := strings.Count(buf, "x/d/r/z/+/-"); n != 2 {
+		t.Fatalf("expected 2 title bars after 'b' then 'r', found %d:\n%s", n, buf)
+	}
+	if !strings.Contains(buf, "kyu (browse)") {
+		t.Fatalf("expected the new sibling's title to be %q:\n%s", "kyu (browse)", buf)
+	}
+}
+
+// TestTitleBarBKeyIsNoOpWithoutCompanion confirms 'b' does nothing on
+// a pane whose Spec carried no BrowseCompanion — same "unrecognized
+// key" no-op as any other key not in the title bar's switch.
+func TestTitleBarBKeyIsNoOpWithoutCompanion(t *testing.T) {
+	m := newTestModel(testSpec("kyu"))
+
+	app := tui.NewApp(m, 60, 16)
+	defer app.Close()
+
+	for range m.controlStripFocusables() {
+		app.HandleInput(input.KeyEvent{Key: input.KeyTab})
+	}
+	for _, cmd := range app.HandleInput(input.KeyEvent{Rune: 'b'}) {
+		if cmd != nil {
+			app.Dispatch(cmd())
+		}
+	}
+	forceRenders(app, 1)
+
+	if buf := app.Buffer().String(); strings.Count(buf, "x/d/r/z/+/-") != 1 {
+		t.Fatalf("'b' should be a no-op without a BrowseCompanion:\n%s", buf)
+	}
+}
+
+// TestBrowseSplitFlowCancelsOnUnrecognizedKey mirrors
+// TestSplitFlowCancelsOnUnrecognizedKey for the 'b' flow: any key
+// other than 'd'/'r' during awaitingBrowseSplit abandons it via
+// cancelSplitMsg rather than splitting in some default direction.
+func TestBrowseSplitFlowCancelsOnUnrecognizedKey(t *testing.T) {
+	s := Spec{
+		Title:           "kyu",
+		Argv:            []string{"true"},
+		BrowseCompanion: &BrowseSpec{Network: "unix", Addr: "/tmp/9mux-test-{id}.sock"},
+	}
+	m := newTestModel(s)
+	id := m.panes[0].id
+
+	next, _ := m.Update(beginBrowseSplitMsg{id: id})
+	m = next.(Model)
+	if !m.panes[0].awaitingBrowseSplit {
+		t.Fatal("expected awaitingBrowseSplit after beginBrowseSplitMsg")
+	}
+
+	next, cmd := m.Update(cancelSplitMsg{id: id})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("cancelSplitMsg should not produce a Cmd")
+	}
+	if m.panes[0].awaitingBrowseSplit {
+		t.Fatal("expected awaitingBrowseSplit cleared after cancelSplitMsg")
+	}
+	if len(m.panes) != 1 {
+		t.Fatalf("got %d panes, want 1 (cancel shouldn't split)", len(m.panes))
+	}
+}
+
 // TestSplitFlowCancelsOnUnrecognizedKey confirms any key other than a
 // valid preset digit during the split-flow's second step abandons it
 // (via cancelSplitMsg) rather than splitting with some default preset.
@@ -1068,6 +1177,29 @@ func TestNewPaneStateExpandsSpawnTokens(t *testing.T) {
 	want := "/tmp/9sh-42.sock"
 	if got := p.command.Args[2]; got != want {
 		t.Fatalf("newPaneState(42, ...).command.Args[2] = %q, want %q", got, want)
+	}
+}
+
+// TestNewPaneStateExpandsBrowseCompanionTokens confirms a preset-
+// sourced Spec's BrowseCompanion address gets the same {id}/$MUX_PID
+// substitution as Argv, resolved once at spawn time and stashed on
+// paneState.browseCompanion — the address the title bar's 'b' key
+// later splits off unchanged (see TestTitleBarBKeyOpensBrowseCompanion).
+func TestNewPaneStateExpandsBrowseCompanionTokens(t *testing.T) {
+	s := Spec{
+		Title:           "kyu",
+		Argv:            []string{"9sh", "--listen-unix", "/tmp/9sh-{id}.sock"},
+		BrowseCompanion: &BrowseSpec{Network: "unix", Addr: "/tmp/9sh-{id}.sock"},
+	}
+	p := newPaneState(42, s)
+	if p.browseCompanion == nil {
+		t.Fatal("expected browseCompanion to be set")
+	}
+	if want := "/tmp/9sh-42.sock"; p.browseCompanion.Addr != want {
+		t.Fatalf("newPaneState(42, ...).browseCompanion.Addr = %q, want %q", p.browseCompanion.Addr, want)
+	}
+	if p.browseCompanion.Network != "unix" {
+		t.Fatalf("newPaneState(42, ...).browseCompanion.Network = %q, want %q", p.browseCompanion.Network, "unix")
 	}
 }
 

@@ -73,6 +73,14 @@ type Spec struct {
 	Title  string
 	Argv   []string
 	Browse *BrowseSpec
+
+	// BrowseCompanion is a second, unexpanded 9P address template
+	// (may itself contain {id}/$MUX_PID) that a command preset (Argv
+	// set) can carry — see config.Preset.BrowseCompanion. Resolved by
+	// newPaneState alongside Argv and stashed on paneState.
+	// browseCompanion, which is what the title bar's 'b' key actually
+	// splits off. Never set alongside Browse.
+	BrowseCompanion *BrowseSpec
 }
 
 // SpecFromPreset builds a Spec from a configured preset (see package
@@ -82,7 +90,11 @@ func SpecFromPreset(p config.Preset) Spec {
 	if p.Browse != nil {
 		return Spec{Title: p.Name, Browse: &BrowseSpec{Network: p.Browse.Network, Addr: p.Browse.Addr}}
 	}
-	return Spec{Title: p.Name, Argv: p.Argv}
+	s := Spec{Title: p.Name, Argv: p.Argv}
+	if p.BrowseCompanion != nil {
+		s.BrowseCompanion = &BrowseSpec{Network: p.BrowseCompanion.Network, Addr: p.BrowseCompanion.Addr}
+	}
+	return s
 }
 
 // muxPID is 9mux's own process id, substituted for $MUX_PID by
@@ -123,11 +135,28 @@ type paneState struct {
 	awaitingSplitKind bool
 	awaitingSplitDir  layout.Direction
 
+	// awaitingBrowseSplit is the 'b' key's own two-step flow, mirroring
+	// awaitingSplitKind: true between a beginBrowseSplitMsg ('b'
+	// pressed on a pane with a browseCompanion) and whatever resolves
+	// it (a 'd'/'r' keypress picking the new browsing sibling's
+	// direction -> splitPaneMsg, or anything else -> cancelSplitMsg,
+	// which clears both this and awaitingSplitKind). No digit step
+	// needed here — unlike beginSplitMsg, the sibling's spec is
+	// already fixed (browseCompanion), only its direction is asked.
+	awaitingBrowseSplit bool
+
 	// Exactly one of command/browse is set — see Spec's own doc
 	// comment. command drives paneNode's widget.Terminal branch;
 	// browse drives its browseNode branch (see browse.go).
 	command *exec.Cmd
 	browse  *browseState
+
+	// browseCompanion is a resolved (post-{id}/$MUX_PID substitution)
+	// 9P address, set only alongside command when the originating
+	// Spec carried a BrowseCompanion — see Spec's own doc comment.
+	// The title bar's 'b' key splits it off as a sibling browsing
+	// pane; nil means that key does nothing on this pane.
+	browseCompanion *BrowseSpec
 }
 
 // splitNode is one node of the pane-layout tree: either a leaf
@@ -318,6 +347,10 @@ func newPaneState(id int, s Spec) *paneState {
 	}
 	argv := expandSpawnTokens(s.Argv, id)
 	p.command = exec.Command(argv[0], argv[1:]...)
+	if s.BrowseCompanion != nil {
+		addr := expandSpawnTokens([]string{s.BrowseCompanion.Addr}, id)[0]
+		p.browseCompanion = &BrowseSpec{Network: s.BrowseCompanion.Network, Addr: addr}
+	}
 	return p
 }
 
@@ -411,6 +444,7 @@ func (m Model) splitPane(id int, dir layout.Direction, spec Spec) (Model, *paneS
 		return m, nil
 	} else {
 		orig.awaitingSplitKind = false
+		orig.awaitingBrowseSplit = false
 	}
 	m.nextID++
 	newPane := newPaneState(m.nextID, spec)
@@ -581,9 +615,18 @@ type beginSplitMsg struct {
 	dir layout.Direction
 }
 
-// cancelSplitMsg abandons an in-progress beginSplitMsg without
-// splitting — any title-bar key that isn't a recognized preset digit
-// while awaitingSplitKind is true produces this.
+// beginBrowseSplitMsg starts the 'b' key's own two-step split flow on
+// id's title bar (only reachable when that pane has a
+// browseCompanion): the next keypress picks the new browsing
+// sibling's direction ('d' or 'r') or cancels — see
+// paneState.awaitingBrowseSplit.
+type beginBrowseSplitMsg struct{ id int }
+
+// cancelSplitMsg abandons an in-progress beginSplitMsg or
+// beginBrowseSplitMsg without splitting — any title-bar key that
+// isn't a recognized preset digit (awaitingSplitKind) or 'd'/'r'
+// (awaitingBrowseSplit) produces this; it clears whichever of the two
+// flows was actually active.
 type cancelSplitMsg struct{ id int }
 
 // splitPaneMsg actually performs the split: id's pane gets a new
@@ -641,9 +684,14 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 			p.awaitingSplitKind = true
 			p.awaitingSplitDir = mm.dir
 		}
+	case beginBrowseSplitMsg:
+		if p := m.find(mm.id); p != nil {
+			p.awaitingBrowseSplit = true
+		}
 	case cancelSplitMsg:
 		if p := m.find(mm.id); p != nil {
 			p.awaitingSplitKind = false
+			p.awaitingBrowseSplit = false
 		}
 	case splitPaneMsg:
 		next, newPane := m.splitPane(mm.id, mm.dir, mm.spec)
@@ -997,10 +1045,17 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 		}
 	}
 	label := chevron + p.title
-	if p.awaitingSplitKind {
+	switch {
+	case p.awaitingSplitKind:
 		label += "  split: " + presetHint(m.presets) + " (else cancel)"
-	} else {
-		label += "  (x/d/r/z/+/-)"
+	case p.awaitingBrowseSplit:
+		label += "  browse split: d/r (else cancel)"
+	default:
+		hint := "x/d/r/z/+/-"
+		if p.browseCompanion != nil {
+			hint += "/b"
+		}
+		label += "  (" + hint + ")"
 	}
 	if number >= 1 && number <= 9 {
 		label = fmt.Sprintf("[F%d] ", number) + label
@@ -1029,6 +1084,16 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 					}
 					return cancelSplitMsg{id: id}
 				}
+				if p.awaitingBrowseSplit {
+					spec := Spec{Title: p.title + " (browse)", Browse: p.browseCompanion}
+					switch ke.Rune {
+					case 'd':
+						return splitPaneMsg{id: id, dir: layout.Vertical, spec: spec}
+					case 'r':
+						return splitPaneMsg{id: id, dir: layout.Horizontal, spec: spec}
+					}
+					return cancelSplitMsg{id: id}
+				}
 				switch ke.Rune {
 				case 'x':
 					return closePaneMsg{id: id}
@@ -1038,6 +1103,10 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 					return beginSplitMsg{id: id, dir: layout.Horizontal}
 				case 'z':
 					return toggleZoomMsg{id: id}
+				case 'b':
+					if p.browseCompanion != nil {
+						return beginBrowseSplitMsg{id: id}
+					}
 				case '+', '=':
 					return resizePaneMsg{id: id, delta: 1}
 				case '-':
