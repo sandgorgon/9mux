@@ -963,12 +963,23 @@ func (m Model) barStyle(focused bool) cell.Style {
 // border) and theme.Focus (a focused one), so the always-visible
 // top-level toolbar reads as a different, more prominent layer of
 // chrome than any pane title, focused or not.
+//
+// Focus swaps to a second solid background (theme.Accent) rather than
+// toggling cell.AttrReverse on top of a fixed one, the same way
+// barStyle swaps between theme.Border/theme.Focus instead of using
+// reverse video: SGR reverse (7/27) is real-time computed into fg/bg by
+// ConPTY (the pty layer under WSL2's console interop and Windows
+// Terminal) rather than tracked as a persistent attribute, and a
+// partial-frame update that only sends the reverse toggle — exactly
+// what Tab does — can leave stale swapped colors behind there. An
+// explicit two-color swap needs no attribute-state memory on the
+// terminal's part, so it doesn't depend on that being right.
 func (m Model) controlStripStyle(focused bool) cell.Style {
-	st := cell.Style{Bg: m.theme.Secondary, Attr: cell.AttrBold}
+	bg := m.theme.Secondary
 	if focused {
-		st.Attr |= cell.AttrReverse
+		bg = m.theme.Accent
 	}
-	return st
+	return cell.Style{Bg: bg, Attr: cell.AttrBold}
 }
 
 // InitialFocusAdvances is how many synthetic Tab presses cmd/9mux's
