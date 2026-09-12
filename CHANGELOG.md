@@ -8,6 +8,17 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Restructured README around actual usage instead of design rationale:
+  added a quick-start, a full keybindings table (previously only
+  discoverable by running 9mux and pressing `?`), and a concrete
+  walkthrough for setting up a 9P-browsing pane (fixed-socket and
+  companion-preset cases). Moved preset/config syntax to
+  `docs/CONFIGURATION.md`, job/session-table detection rules and
+  known caveats to `docs/NUANCES.md`, and design notes/lineage/
+  rejected-alternatives to `docs/DESIGN.md`. No behavior change.
+
 ## [0.1.6] - 2026-09-10
 
 ### Changed
