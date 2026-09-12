@@ -8,8 +8,14 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-11
+
 ### Changed
 
+- Bump `sandgorgon/tui` from v0.8.0 to v0.8.1: gives `Theme.Info` its
+  own distinct indigo/blue-violet instead of duplicating `Accent`'s
+  RGB value. No API change; 9mux does not reference `Theme.Info`, so
+  no behavior change here either.
 - Restructured README around actual usage instead of design rationale:
   added a quick-start, a full keybindings table (previously only
   discoverable by running 9mux and pressing `?`), and a concrete
