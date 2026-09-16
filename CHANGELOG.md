@@ -8,6 +8,12 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `sandgorgon/tui` from v0.8.1 to v0.9.0: adds `OnSelectionChange`
+  to `TextInput`/`TextArea`. No API change 9mux uses; no behavior
+  change here either.
+
 ## [0.1.7] - 2026-09-11
 
 ### Changed
