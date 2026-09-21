@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-20
+
 ### Changed
 
 - A pane's title bar is drawn in reverse video while it has keyboard
