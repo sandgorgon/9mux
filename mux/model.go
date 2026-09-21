@@ -236,6 +236,16 @@ type Model struct {
 	// hotkey elsewhere in this package).
 	helpOpen bool
 
+	// focusReq is a focus change the Update that just ran wants applied
+	// (index + 1; 0 = none), reported through RequestedFocus. tui applies
+	// it synchronously inside the same Dispatch instead of through a
+	// tui.SetFocusCmd, so keys already waiting behind the one that asked
+	// (a paste, type-ahead, a macro) reach the widget it moved focus to,
+	// not the one it left — on a title bar those keys are commands (x
+	// closes the pane), in a shell they're text. Cleared at the start of
+	// every Update, so it only ever reflects the Update that set it.
+	focusReq int
+
 	// focusedKey mirrors tui.FocusAware's SetFocusedKey — see that
 	// method's doc comment for why a *string (allocated once in New,
 	// like panes' own []*paneState pointers) rather than a plain string
@@ -571,7 +581,10 @@ func releasedFromTerminal(key any) bool {
 	return ok && strings.HasPrefix(s, "pane-") && strings.HasSuffix(s, "-term")
 }
 
-// focusPane returns a Cmd focusing pane id's content, first making sure
+// RequestedFocus implements tui.FocusRequester — see Model.focusReq.
+func (m Model) RequestedFocus() (int, bool) { return m.focusReq - 1, m.focusReq > 0 }
+
+// focusPane requests focus on pane id's content, first making sure
 // it can actually be seen: a minimized pane is restored, and while a
 // pane is zoomed the zoom follows focus to the target instead of
 // leaving focus on a collapsed, invisible pane. Its focus index comes
@@ -593,7 +606,8 @@ func (m Model) focusPane(id int) (tui.Model, tui.Cmd) {
 	if m.zoomedID != 0 {
 		m.zoomedID = id
 	}
-	return m, tui.SetFocusCmd(m.controlStripFocusables() + pos*2 + 1)
+	m.focusReq = m.controlStripFocusables() + pos*2 + 1 + 1 // content index, stored +1
+	return m, nil
 }
 
 // navKeyMsg maps a key pressed on pane id's title bar to the Msg that
@@ -741,6 +755,7 @@ type toggleZoomMsg struct{ id int }
 func AddPane(s Spec) tui.Msg { return addPaneMsg{spec: s} }
 
 func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
+	m.focusReq = 0
 	switch mm := msg.(type) {
 	case tui.ReleaseMsg:
 		// Ctrl+\ in a Terminal pane. tui has already moved focus onward
@@ -750,12 +765,14 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		// its content in focus order — the same two-focusables-per-pane
 		// layout focusPane's index math relies on.
 		if releasedFromTerminal(mm.FromKey) && mm.FromIndex > 0 {
-			return m, tui.SetFocusCmd(mm.FromIndex - 1)
+			m.focusReq = mm.FromIndex // index FromIndex-1, stored +1
+			return m, nil
 		}
 	case focusPaneMsg:
 		return m.focusPane(mm.id)
 	case focusControlStripMsg:
-		return m, tui.SetFocusCmd(0)
+		m.focusReq = 1 // index 0, stored +1
+		return m, nil
 	case closePaneMsg:
 		return m.closePane(mm.id)
 	case beginSplitMsg:
