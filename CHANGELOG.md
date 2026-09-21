@@ -10,9 +10,27 @@ once a first tagged release is cut.
 
 ### Changed
 
-- Bump `sandgorgon/tui` from v0.8.1 to v0.9.0: adds `OnSelectionChange`
-  to `TextInput`/`TextArea`. No API change 9mux uses; no behavior
-  change here either.
+- Moving focus between panes is now `Ctrl+\` then a navigation key,
+  and lands directly in the target pane's content. `Ctrl+\` (a
+  Terminal pane's release key) moves focus to that pane's own title
+  bar instead of the next pane's; there, `n`/`p` (or the arrow keys)
+  step to the next/previous pane, `1`-`9` pick pane N, `a` picks the
+  control strip, and `Esc`/`Ctrl+\`/`Tab` go back into the pane. A
+  minimized target pane is restored, and a zoom follows focus.
+- Bump `sandgorgon/tui` from v0.9.0 to v0.10.0: a `RawKeyClaimer`'s
+  release key is now reported to `Update` as `tui.ReleaseMsg`, which
+  the navigation above is built on. (v0.9.0 added `OnSelectionChange`
+  to `TextInput`/`TextArea`; no API change 9mux uses, no behavior
+  change here.)
+- Title bars are labelled `[N]` instead of `[F<N>]`.
+
+### Removed
+
+- **Breaking:** `F1`-`F9` no longer jump focus to pane N. Terminal
+  emulators keep function keys for themselves (xfce4-terminal never
+  forwards `F1`), and because a keypress reaches both 9mux and the
+  focused pane, programs like `htop`, `mc` and `vim` that use F-keys
+  both acted on the key and had focus jump away. Use `Ctrl+\` then `1`-`9`.
 
 ## [0.1.7] - 2026-09-11
 

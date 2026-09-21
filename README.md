@@ -28,7 +28,7 @@ reasoning and lineage.
 ## Status
 
 Working: the generic split-tree multiplexer — split/resize/minimize/
-zoom/close, F1-F9 focus-jump, a configurable control strip, real pty
+zoom/close, keyboard pane-jump, a configurable control strip, real pty
 hosting via `widget.Terminal` — and the 9P-browsing pane: a directory
 listing, job table, or session-history table (see below) reached over
 `github.com/sandgorgon/9p`, pointed at a running 9sh's `-listen-unix`
@@ -88,12 +88,23 @@ pointed at a 9P server — add presets to `~/.config/9mux/config`; see
 | `b` | *(command presets with a paired `<name>.browse =` config line only)* then `d`/`r` for direction: split off a 9P-browsing pane pointed at this pane's own socket |
 | `+` / `-` | Resize this pane along its split axis, down to one visible content line — smaller than that, minimize instead |
 | click / Enter | Minimize/restore (only along a vertical split axis) |
-| `F1`-`F9` | Jump keyboard focus straight to pane N |
+| `n` / `p` | Jump focus into the next / previous pane (also `Right`/`Down` and `Left`/`Up`; wraps around) |
+| `1`-`9` | Jump focus into pane N (the `[N]` shown in its title bar) |
+| `a` | Jump focus to the control strip |
+| `Esc` / `Ctrl+\` | Go back into this pane (so does `Tab`) |
+
+Any of the jump keys lands directly in the target pane's content. A
+minimized pane is restored, and while a pane is zoomed the zoom follows
+focus to the target.
 
 ### Inside a Terminal pane, once its content has focus
 
 `Tab` reaches the hosted process directly (real completion, if it has
-any); `Ctrl+\` releases focus back to pane navigation.
+any); `Ctrl+\` moves focus to that pane's own title bar, where the
+navigation keys above take over. Moving between shell panes is
+therefore `Ctrl+\` then `n`/`p`/`1`-`9` — two keystrokes, landing
+directly in the other pane. There are no function-key bindings:
+terminal emulators keep those for themselves.
 
 ### Inside a 9P-browsing pane
 

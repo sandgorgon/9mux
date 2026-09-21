@@ -732,42 +732,18 @@ func TestRedrawTickStopsOnceNoPanesRemain(t *testing.T) {
 	}
 }
 
-// TestFKeyRequestsFocusAtComputedIndex is a direct Update-level test:
-// with 3 panes, F2 should ask to focus the second pane's title bar.
-func TestFKeyRequestsFocusAtComputedIndex(t *testing.T) {
+// TestFKeysAreNotBindings locks in that F1-F9 no longer jump focus:
+// terminal emulators keep them, and hosted programs (htop, mc, vim)
+// use them too.
+func TestFKeysAreNotBindings(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
-
-	_, cmd := m.Update(input.KeyEvent{Key: input.KeyF2})
-	if cmd == nil {
-		t.Fatal("expected a non-nil Cmd requesting a focus change")
-	}
-	fm, ok := cmd().(tui.FocusMsg)
-	if !ok {
-		t.Fatalf("expected tui.FocusMsg, got %T", cmd())
-	}
-	want := m.controlStripFocusables() + 2 // pane b's title bar
-	if fm.Index != want {
-		t.Fatalf("got focus index %d, want %d", fm.Index, want)
+	for k := input.KeyF1; k <= input.KeyF9; k++ {
+		if _, cmd := m.Update(input.KeyEvent{Key: k}); cmd != nil {
+			t.Fatalf("F-key %v produced a Cmd (%v), want none", k, cmd())
+		}
 	}
 }
 
-// TestFKeyPastPaneCountIsNoop confirms F9 with only one pane open
-// doesn't return a Cmd at all.
-func TestFKeyPastPaneCountIsNoop(t *testing.T) {
-	m := newTestModel(testSpec("a"))
-	_, cmd := m.Update(input.KeyEvent{Key: input.KeyF9})
-	if cmd != nil {
-		t.Fatalf("expected a nil Cmd, got one that produces %v", cmd())
-	}
-}
-
-// TestFKeyJumpsFocusEndToEnd drives the real input path: confirms a
-// real F2 KeyEvent traveling through App.HandleInput's actual event
-// pipeline still produces a Cmd yielding the right tui.FocusMsg. Real
-// end-to-end confirmation that F2 moves live focus is a tmux/real-
-// terminal check, not something a headless Go test can assert (see
-// tui's own Run()/Dispatch split).
-//
 // findFocusMsg unwraps a possible tui.BatchMsg to find it: testSpec's
 // panes run "true", which exits almost instantly, and since tui v0.6.1
 // (App.Dispatch draining every widget's tui.PendingMsgSource on every
@@ -795,32 +771,222 @@ func findFocusMsg(t *testing.T, msg tui.Msg) tui.FocusMsg {
 	return tui.FocusMsg{}
 }
 
-func TestFKeyJumpsFocusEndToEnd(t *testing.T) {
-	m := newTestModel(testSpec("a"), testSpec("b"))
-	app := tui.NewApp(m, 80, 16)
-	defer app.Close()
+// paneTitleIndex and paneContentIndex are the focus indices of the
+// pane at 0-based document position pos (see focusPane).
+func paneTitleIndex(m Model, pos int) int   { return m.controlStripFocusables() + pos*2 }
+func paneContentIndex(m Model, pos int) int { return paneTitleIndex(m, pos) + 1 }
 
-	cmds := app.HandleInput(input.KeyEvent{Key: input.KeyF2})
-	if len(cmds) != 1 || cmds[0] == nil {
-		t.Fatalf("expected exactly one non-nil Cmd, got %v", cmds)
+// TestReleaseFromTerminalLandsOnOwnTitleBar: Ctrl+\ (tui.ReleaseMsg)
+// in pane b's Terminal must steer focus to pane b's own title bar, not
+// wherever tui's default moveFocus put it (the next pane's title bar).
+func TestReleaseFromTerminalLandsOnOwnTitleBar(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
+	id := m.paneOrder()[1]
+	from := paneContentIndex(m, 1)
+
+	_, cmd := m.Update(tui.ReleaseMsg{FromIndex: from, FromKey: paneKey(id, "term")})
+	if cmd == nil {
+		t.Fatal("expected a Cmd steering focus")
 	}
-	fm := findFocusMsg(t, cmds[0]())
-	want := m.controlStripFocusables() + 2 // pane b's title bar
-	if fm.Index != want {
-		t.Fatalf("got focus index %d, want %d", fm.Index, want)
+	fm, ok := cmd().(tui.FocusMsg)
+	if !ok {
+		t.Fatalf("expected tui.FocusMsg, got %T", cmd())
+	}
+	if want := paneTitleIndex(m, 1); fm.Index != want {
+		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", fm.Index, want)
 	}
 }
 
-// TestPaneTitleShowsFKeyLabel confirms the "[F#]" hint painted in
-// paneNode actually reaches the screen for the first 9 panes.
-func TestPaneTitleShowsFKeyLabel(t *testing.T) {
+// TestReleaseFromNonTerminalIsIgnored: only a pane's Terminal content
+// releases into navigation; any other key (or none) leaves tui's default.
+func TestReleaseFromNonTerminalIsIgnored(t *testing.T) {
+	m := newTestModel(testSpec("a"))
+	for _, key := range []any{nil, "quit-btn", 42, paneKey(1, "title")} {
+		if _, cmd := m.Update(tui.ReleaseMsg{FromIndex: 3, FromKey: key}); cmd != nil {
+			t.Errorf("FromKey %v produced a Cmd, want none", key)
+		}
+	}
+}
+
+// TestReleaseKeyEndToEnd drives the real input path: with focus on pane
+// b's Terminal, a real Ctrl+\ must end with a focus request for pane
+// b's own title bar (tui's own moveFocus would have chosen pane c's).
+func TestReleaseKeyEndToEnd(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
+	app := tui.NewApp(m, 80, 24)
+	defer app.Close()
+	if !app.SetFocus(paneContentIndex(m, 1)) {
+		t.Fatal("could not focus pane b's content")
+	}
+
+	cmds := app.HandleInput(input.KeyEvent{Rune: '\\', Mod: input.ModCtrl})
+	var fm tui.FocusMsg
+	found := false
+	for _, c := range cmds {
+		if c == nil {
+			continue
+		}
+		if fm, found = findFocusMsgOK(c()); found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no FocusMsg among %d Cmds", len(cmds))
+	}
+	if want := paneTitleIndex(m, 1); fm.Index != want {
+		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", fm.Index, want)
+	}
+}
+
+func findFocusMsgOK(msg tui.Msg) (tui.FocusMsg, bool) {
+	switch m := msg.(type) {
+	case tui.FocusMsg:
+		return m, true
+	case tui.BatchMsg:
+		for _, c := range m {
+			if c == nil {
+				continue
+			}
+			if fm, ok := findFocusMsgOK(c()); ok {
+				return fm, true
+			}
+		}
+	}
+	return tui.FocusMsg{}, false
+}
+
+func TestNavKeyMsg(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
+	order := m.paneOrder()
+	a, b, c := order[0], order[1], order[2]
+	r := func(ch rune) input.KeyEvent { return input.KeyEvent{Rune: ch} }
+
+	tests := []struct {
+		name string
+		id   int
+		key  input.KeyEvent
+		want tui.Msg
+	}{
+		{"n steps forward", a, r('n'), focusPaneMsg{id: b}},
+		{"n wraps", c, r('n'), focusPaneMsg{id: a}},
+		{"p steps back", b, r('p'), focusPaneMsg{id: a}},
+		{"p wraps", a, r('p'), focusPaneMsg{id: c}},
+		{"Right", a, input.KeyEvent{Key: input.KeyRight}, focusPaneMsg{id: b}},
+		{"Down", a, input.KeyEvent{Key: input.KeyDown}, focusPaneMsg{id: b}},
+		{"Left wraps", a, input.KeyEvent{Key: input.KeyLeft}, focusPaneMsg{id: c}},
+		{"Up", b, input.KeyEvent{Key: input.KeyUp}, focusPaneMsg{id: a}},
+		{"digit 3", a, r('3'), focusPaneMsg{id: c}},
+		{"digit 1 from another pane", c, r('1'), focusPaneMsg{id: a}},
+		{"digit past pane count", a, r('4'), nil},
+		{"zero", a, r('0'), nil},
+		{"a is the control strip", b, r('a'), focusControlStripMsg{}},
+		{"Esc goes back in", b, input.KeyEvent{Key: input.KeyEsc}, focusPaneMsg{id: b}},
+		{"Ctrl+\\ goes back in", b, input.KeyEvent{Rune: '\\', Mod: input.ModCtrl}, focusPaneMsg{id: b}},
+		{"Ctrl+N is not n", a, input.KeyEvent{Rune: 'n', Mod: input.ModCtrl}, nil},
+		{"Alt+1 is not 1", a, input.KeyEvent{Rune: '1', Mod: input.ModAlt}, nil},
+		{"existing action key", a, r('x'), nil},
+		{"unknown pane", 999, r('n'), nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := m.navKeyMsg(tc.id, tc.key); got != tc.want {
+				t.Errorf("navKeyMsg = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFocusPaneTargetsContent: focusPaneMsg lands on the target's
+// content (not its title bar), wherever it sits in document order.
+func TestFocusPaneTargetsContent(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
+	for pos, id := range m.paneOrder() {
+		_, cmd := m.Update(focusPaneMsg{id: id})
+		if cmd == nil {
+			t.Fatalf("pane %d: expected a focus Cmd", pos)
+		}
+		if got, want := cmd().(tui.FocusMsg).Index, paneContentIndex(m, pos); got != want {
+			t.Errorf("pane %d: focus index = %d, want %d", pos, got, want)
+		}
+	}
+	if _, cmd := m.Update(focusPaneMsg{id: 999}); cmd != nil {
+		t.Errorf("unknown pane produced a Cmd, want none")
+	}
+	if _, cmd := m.Update(focusControlStripMsg{}); cmd == nil || cmd().(tui.FocusMsg).Index != 0 {
+		t.Errorf("focusControlStripMsg should focus index 0")
+	}
+}
+
+// TestFocusPaneRestoresMinimizedAndMovesZoom: navigating into a pane
+// must never leave focus on something invisible.
+func TestFocusPaneRestoresMinimizedAndMovesZoom(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	a, b := m.paneOrder()[0], m.paneOrder()[1]
+
+	m.find(b).minimized = true
+	m.Update(focusPaneMsg{id: b})
+	if m.find(b).minimized {
+		t.Error("navigating to a minimized pane should restore it")
+	}
+
+	m.zoomedID = a
+	next, _ := m.Update(focusPaneMsg{id: b})
+	if got := next.(Model).zoomedID; got != b {
+		t.Errorf("zoomedID = %d, want %d (zoom should follow focus)", got, b)
+	}
+
+	m.zoomedID = 0
+	next, _ = m.Update(focusPaneMsg{id: b})
+	if got := next.(Model).zoomedID; got != 0 {
+		t.Errorf("zoomedID = %d, want 0 (navigating must not zoom)", got)
+	}
+}
+
+// TestTitleBarNavKeyEndToEnd drives the real input path: with focus on
+// pane a's title bar, pressing 2 must request focus on pane b's content.
+func TestTitleBarNavKeyEndToEnd(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	app := tui.NewApp(m, 80, 16)
+	defer app.Close()
+	if !app.SetFocus(paneTitleIndex(m, 0)) {
+		t.Fatal("could not focus pane a's title bar")
+	}
+
+	var got tui.FocusMsg
+	found := false
+	for _, c := range app.HandleInput(input.KeyEvent{Rune: '2'}) {
+		if c == nil {
+			continue
+		}
+		// The title bar's widget Cmd yields focusPaneMsg; Update turns
+		// that into the focus request.
+		if follow := app.Dispatch(c()); follow != nil {
+			if fm, ok := findFocusMsgOK(follow()); ok {
+				got, found = fm, true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no FocusMsg from pressing 2 on a title bar")
+	}
+	if want := paneContentIndex(m, 1); got.Index != want {
+		t.Fatalf("focus index = %d, want %d (pane b's content)", got.Index, want)
+	}
+}
+
+// TestPaneTitleShowsNumberLabel confirms the "[N]" hint painted in
+// paneNode reaches the screen, and that the old "[F#]" form is gone.
+func TestPaneTitleShowsNumberLabel(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"))
 	app := tui.NewApp(m, 80, 16)
 	defer app.Close()
 
 	buf := app.Buffer().String()
-	if !strings.Contains(buf, "[F1]") || !strings.Contains(buf, "[F2]") {
-		t.Fatalf("expected both [F1] and [F2] labels on screen:\n%s", buf)
+	if !strings.Contains(buf, "[1]") || !strings.Contains(buf, "[2]") {
+		t.Fatalf("expected both [1] and [2] labels on screen:\n%s", buf)
+	}
+	if strings.Contains(buf, "[F1]") {
+		t.Fatalf("the [F#] label should be gone:\n%s", buf)
 	}
 }
 
@@ -1071,7 +1237,7 @@ func TestMinimizeKeepsProcessAliveAndStatePreserved(t *testing.T) {
 
 // TestHorizontalSplitPaneCannotMinimize drives the real input path: a
 // pane that's a child of a horizontal split shouldn't be minimizable
-// at all. Uses F2 to jump straight to the second pane's own title bar,
+// at all. Uses SetFocus to jump straight to the second pane's own title bar,
 // then Enter (the normal click-equivalent minimize toggle) should be a
 // no-op — both panes' live markers must stay visible.
 func TestHorizontalSplitPaneCannotMinimize(t *testing.T) {
@@ -1087,10 +1253,8 @@ func TestHorizontalSplitPaneCannotMinimize(t *testing.T) {
 	waitForText(t, app, "MARKERA", 3*time.Second)
 	waitForText(t, app, "MARKERB", 3*time.Second)
 
-	for _, cmd := range app.HandleInput(input.KeyEvent{Key: input.KeyF2}) {
-		if cmd != nil {
-			app.Dispatch(cmd())
-		}
+	if !app.SetFocus(paneTitleIndex(m, 1)) {
+		t.Fatal("could not focus pane b's title bar")
 	}
 	for _, cmd := range app.HandleInput(input.KeyEvent{Key: input.KeyEnter}) {
 		if cmd != nil {
@@ -1221,5 +1385,69 @@ func waitForText(t *testing.T, app *tui.App, substr string, timeout time.Duratio
 			t.Fatalf("timed out waiting for %q in buffer:\n%s", substr, app.Buffer().String())
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// pressKey feeds one key through the real input path and applies every
+// resulting Cmd the way tui's Run loop does: widget Cmds and Update's
+// Msgs are dispatched back in, and a FocusMsg moves focus.
+func pressKey(app *tui.App, ev input.KeyEvent) {
+	var apply func(c tui.Cmd)
+	apply = func(c tui.Cmd) {
+		if c == nil {
+			return
+		}
+		switch msg := c().(type) {
+		case nil:
+		case tui.FocusMsg:
+			app.SetFocus(msg.Index)
+		case tui.BatchMsg:
+			for _, sub := range msg {
+				apply(sub)
+			}
+		case tui.QuitMsg, tui.ClipboardMsg:
+		default:
+			apply(app.Dispatch(msg))
+		}
+	}
+	for _, c := range app.HandleInput(ev) {
+		apply(c)
+	}
+}
+
+// TestCtrlBackslashThenNMovesTypingToNextShell is the whole feature end
+// to end against two real shells: with focus in pane a's Terminal,
+// Ctrl+\ then n must land in pane b's Terminal, so typed text reaches
+// b's process and not a's.
+func TestCtrlBackslashThenNMovesTypingToNextShell(t *testing.T) {
+	skipUnlessOnPath(t, "sh")
+	a := []string{"sh", "-c", "echo READYA; read x; echo A-GOT:$x; read y"}
+	b := []string{"sh", "-c", "echo READYB; read x; echo B-GOT:$x; read y"}
+	m := newTestModel(Spec{Title: "a", Argv: a})
+	m, _ = m.splitPane(m.panes[0].id, layout.Horizontal, Spec{Title: "b", Argv: b})
+
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+	waitForText(t, app, "READYA", 3*time.Second)
+	waitForText(t, app, "READYB", 3*time.Second)
+
+	if !app.SetFocus(paneContentIndex(m, 0)) {
+		t.Fatal("could not focus pane a's content")
+	}
+	pressKey(app, input.KeyEvent{Rune: '\\', Mod: input.ModCtrl})
+	if got, want := app.FocusIndex(), paneTitleIndex(m, 0); got != want {
+		t.Fatalf("after Ctrl+\\ focus = %d, want %d (pane a's own title bar)", got, want)
+	}
+	pressKey(app, input.KeyEvent{Rune: 'n'})
+	if got, want := app.FocusIndex(), paneContentIndex(m, 1); got != want {
+		t.Fatalf("after n focus = %d, want %d (pane b's content)", got, want)
+	}
+
+	pressKey(app, input.KeyEvent{Rune: 'h'})
+	pressKey(app, input.KeyEvent{Rune: 'i'})
+	pressKey(app, input.KeyEvent{Key: input.KeyEnter})
+	waitForText(t, app, "B-GOT:hi", 3*time.Second)
+	if strings.Contains(app.Buffer().String(), "A-GOT") {
+		t.Fatalf("typed text reached pane a's shell instead of b's:\n%s", app.Buffer().String())
 	}
 }
