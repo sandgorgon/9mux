@@ -8,6 +8,22 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Focus in 9mux's own chrome is now shown with a solid background color
+  instead of reverse video (SGR 7): a focused control-strip button
+  swaps to the theme's Accent (teal), and a title bar that has focus
+  itself uses Secondary (purple), beside the grey (idle) and blue (focus
+  is in the pane) it already used. ConPTY, the pty layer under WSL2 and
+  Windows Terminal, computes reverse video in real time instead of
+  tracking it as an attribute, so a partial redraw that only toggles it,
+  which is what Tab does, can leave stale swapped colors on screen.
+  VTE-based terminals aren't affected. Secondary rather than Accent for
+  the title bar because teal sits too close to the focus blue to tell
+  "typing in the shell" from "on the title bar". An exited pane keeps
+  its error color. A test now guards that the chrome never uses reverse
+  video in any focus state.
+
 ## [0.2.1] - 2026-09-20
 
 ### Changed

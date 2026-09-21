@@ -1183,19 +1183,16 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 	}
 	titleBar := flatFocusable(paneKey(id, "title"), label, titleFill, true, m.titleStyle(p, false),
 		func(focused bool) cell.Style {
-			st := m.titleStyle(p, focused || m.paneHasFocus(id))
+			// focused is this title bar's own focus, as opposed to
+			// paneHasFocus (focus anywhere in the pane, content included).
+			// The two must look different because they route keys
+			// differently: on the title bar, letters are commands (x
+			// closes, d/r split, n/p/1-9 navigate), while in the content
+			// they go to the hosted process.
 			if focused {
-				// focused is this title bar's own focus, as opposed to
-				// paneHasFocus (focus anywhere in the pane, content
-				// included). The two look the same without this, but they
-				// route keys differently: on the title bar, letters are
-				// commands (x closes, d/r split, n/p/1-9 navigate), while in
-				// the content they go to the hosted process. Reverse video,
-				// like the control strip's focused buttons, makes the
-				// difference visible without relying on color alone.
-				st.Attr |= cell.AttrReverse
+				return m.titleFocusedStyle(p)
 			}
-			return st
+			return m.titleStyle(p, m.paneHasFocus(id))
 		},
 		func(e input.Event) tui.Msg {
 			if ke, ok := e.(input.KeyEvent); ok {
@@ -1319,6 +1316,25 @@ func presetHint(presets []config.Preset) string {
 		parts[i] = fmt.Sprintf("%d=%s", i+1, p.Name)
 	}
 	return strings.Join(parts, " ")
+}
+
+// titleFocusedStyle is a title bar's look while it has keyboard focus
+// itself: a third solid background, theme.Secondary, beside the
+// Border/Focus pair titleStyle swaps between. A second color rather than
+// cell.AttrReverse, for the same reason controlStripStyle avoids it: ConPTY
+// (WSL2, Windows Terminal) can leave stale swapped colors behind after a
+// partial redraw that only toggles reverse video, and an explicit color
+// needs no attribute memory on the terminal's part. Secondary, not Accent,
+// because Accent (a teal) sits too close to Focus (a blue) to tell "typing
+// in the shell" from "on the title bar" at a glance, and Secondary is
+// already shown with the terminal's own foreground text on the control
+// strip, so legibility is proven. An exited pane keeps its Error look:
+// there is no shell left to type into, so the bar is never ambiguous.
+func (m Model) titleFocusedStyle(p *paneState) cell.Style {
+	if p.exited {
+		return m.titleStyle(p, true)
+	}
+	return cell.Style{Bg: m.theme.Secondary, Attr: cell.AttrBold}
 }
 
 func (m Model) titleStyle(p *paneState, focused bool) cell.Style {
