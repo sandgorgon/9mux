@@ -1416,9 +1416,9 @@ func TestCtrlBackslashThenNMovesTypingToNextShell(t *testing.T) {
 	}
 }
 
-// titleLabelAttr returns the style attribute of the first cell of pane
-// number's "[N]" title label on screen.
-func titleLabelAttr(t *testing.T, app *tui.App, number int) cell.Attr {
+// titleLabelStyle returns the style of the first cell of pane number's
+// "[N]" title label on screen.
+func titleLabelStyle(t *testing.T, app *tui.App, number int) cell.Style {
 	t.Helper()
 	label := fmt.Sprintf("[%d]", number)
 	buf := app.Buffer()
@@ -1432,39 +1432,87 @@ func titleLabelAttr(t *testing.T, app *tui.App, number int) cell.Attr {
 			row.WriteRune(r)
 		}
 		if i := strings.Index(row.String(), label); i >= 0 {
-			return buf.At(i, y).Style.Attr
+			return buf.At(i, y).Style
 		}
 	}
 	t.Fatalf("no %s title label on screen:\n%s", label, buf.String())
-	return 0
+	return cell.Style{}
 }
 
 // TestTitleBarFocusIsVisiblyDistinctFromContentFocus: with focus on a
 // pane's title bar, letters are commands (x closes it); with focus in
 // its content they go to the shell. The two must look different, or a
 // user can't tell which they're in. Only the focused title bar itself
-// gets reverse video; the same pane with content focus, and other
-// panes' title bars, don't.
+// gets the extra background color; the same pane with content focus, and
+// other panes' title bars, keep the Border/Focus pair.
 func TestTitleBarFocusIsVisiblyDistinctFromContentFocus(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"))
 	app := tui.NewApp(m, 100, 16)
 	defer app.Close()
+	th := m.theme
+	if th.Secondary == th.Focus || th.Secondary == th.Border {
+		t.Fatalf("theme setup: the title-bar focus color must differ from Focus and Border")
+	}
 
 	app.SetFocus(paneContentIndex(m, 0))
-	if titleLabelAttr(t, app, 1)&cell.AttrReverse != 0 {
-		t.Error("pane 1's title bar is reverse-video while focus is in its content")
+	if got := titleLabelStyle(t, app, 1).Bg; got != th.Focus {
+		t.Errorf("pane 1 title bg = %v with focus in its content, want Focus %v", got, th.Focus)
 	}
 
 	app.SetFocus(paneTitleIndex(m, 0))
-	if titleLabelAttr(t, app, 1)&cell.AttrReverse == 0 {
-		t.Error("pane 1's title bar isn't reverse-video while it has focus itself")
+	if got := titleLabelStyle(t, app, 1).Bg; got != th.Secondary {
+		t.Errorf("pane 1 title bg = %v while it has focus itself, want Secondary %v", got, th.Secondary)
 	}
-	if titleLabelAttr(t, app, 2)&cell.AttrReverse != 0 {
-		t.Error("pane 2's title bar is reverse-video although focus is on pane 1's")
+	if got := titleLabelStyle(t, app, 2).Bg; got != th.Border {
+		t.Errorf("pane 2 title bg = %v, want Border %v (focus is on pane 1's bar)", got, th.Border)
 	}
 
 	app.SetFocus(paneContentIndex(m, 0))
-	if titleLabelAttr(t, app, 1)&cell.AttrReverse != 0 {
-		t.Error("the reverse-video cue didn't clear after focus moved back into the content")
+	if got := titleLabelStyle(t, app, 1).Bg; got != th.Focus {
+		t.Errorf("the title-bar focus color didn't clear after focus moved back into the content: %v", got)
+	}
+}
+
+// TestControlStripFocusIsASecondColor: a focused control-strip button
+// swaps to Accent instead of toggling reverse video.
+func TestControlStripFocusIsASecondColor(t *testing.T) {
+	m := newTestModel(testSpec("a"))
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+
+	app.SetFocus(paneContentIndex(m, 0))
+	if got := app.Buffer().At(2, 0).Style.Bg; got != m.theme.Secondary {
+		t.Errorf("unfocused control strip bg = %v, want Secondary %v", got, m.theme.Secondary)
+	}
+	app.SetFocus(0)
+	if got := app.Buffer().At(2, 0).Style.Bg; got != m.theme.Accent {
+		t.Errorf("focused control-strip button bg = %v, want Accent %v", got, m.theme.Accent)
+	}
+}
+
+// TestChromeNeverUsesReverseVideo guards the fix for ConPTY (WSL2, Windows
+// Terminal), which can leave stale swapped colors after a partial redraw
+// that only toggles SGR reverse: focus in 9mux's own chrome (control strip
+// and title bars) is shown with solid background colors, in every focus
+// state. Hosted terminal content is out of scope: it paints whatever the
+// program does, including its cursor.
+func TestChromeNeverUsesReverseVideo(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+
+	for idx := 0; app.SetFocus(idx); idx++ {
+		buf := app.Buffer()
+		for x := 0; x < 100; x++ {
+			if buf.At(x, 0).Style.Attr&cell.AttrReverse != 0 {
+				t.Errorf("focus index %d: control strip cell x=%d uses reverse video", idx, x)
+				break
+			}
+		}
+		for n := 1; n <= 2; n++ {
+			if titleLabelStyle(t, app, n).Attr&cell.AttrReverse != 0 {
+				t.Errorf("focus index %d: pane %d title bar uses reverse video", idx, n)
+			}
+		}
 	}
 }
