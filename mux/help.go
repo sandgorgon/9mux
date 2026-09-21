@@ -51,6 +51,8 @@ var keybindingHelp = []string{
 	"  1-9            jump focus into pane N (the [N] in its title bar)",
 	"  a              jump focus to the control strip",
 	"  Esc, Ctrl+\\    go back into this pane (so does Tab)",
+	"  A title bar with keyboard focus is drawn in reverse video: keys",
+	"  there are commands, not typed into the shell.",
 	"  Any of these lands directly in the target pane's content. A",
 	"  minimized pane is restored; if a pane is zoomed, the zoom follows.",
 	"",

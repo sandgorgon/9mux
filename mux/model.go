@@ -1154,7 +1154,21 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 		titleFill = '─'
 	}
 	titleBar := flatFocusable(paneKey(id, "title"), label, titleFill, true, m.titleStyle(p, false),
-		func(focused bool) cell.Style { return m.titleStyle(p, focused || m.paneHasFocus(id)) },
+		func(focused bool) cell.Style {
+			st := m.titleStyle(p, focused || m.paneHasFocus(id))
+			if focused {
+				// focused is this title bar's own focus, as opposed to
+				// paneHasFocus (focus anywhere in the pane, content
+				// included). The two look the same without this, but they
+				// route keys differently: on the title bar, letters are
+				// commands (x closes, d/r split, n/p/1-9 navigate), while in
+				// the content they go to the hosted process. Reverse video,
+				// like the control strip's focused buttons, makes the
+				// difference visible without relying on color alone.
+				st.Attr |= cell.AttrReverse
+			}
+			return st
+		},
 		func(e input.Event) tui.Msg {
 			if ke, ok := e.(input.KeyEvent); ok {
 				if p.awaitingSplitKind {
