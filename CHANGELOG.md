@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-20
+
 ### Changed
 
 - Focus in 9mux's own chrome is now shown with a solid background color
