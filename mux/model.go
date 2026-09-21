@@ -15,7 +15,7 @@
 // pane package had, reproduced without 9mux ever depending on 9sh
 // itself. Spec/paneState carry exactly this one more variant, nothing
 // more general — everything else in this package (the split tree,
-// F1-F9, minimize/zoom/resize, reconcile keying) treats a browsing
+// pane navigation, minimize/zoom/resize, reconcile keying) treats a browsing
 // pane exactly like any other.
 //
 // Minimizing is a click/Enter action on a pane's title bar, not a
@@ -23,13 +23,15 @@
 // the focused widget at once, with no way to suppress the latter — a
 // hotkey pressed while a pane is focused would be forwarded straight
 // into the hosted process right alongside whatever Update did with it.
-// F1-F9 (jump keyboard focus straight to pane N, see paneOrder and
-// Update's input.KeyEvent case) are a deliberate exception to that
-// rule: they're the one case where a real global hotkey is worth the
-// same forwarding-into-the-hosted-process tradeoff, chosen specifically
-// because F-keys are far less likely than a plain letter/digit to
-// collide with anything a real shell or its readline bindings already
-// use. Panes are arranged in a layout tree (see splitNode), not a flat
+// For the same reason there are no global pane-jump hotkeys (F1-F9 was
+// one, and was removed: terminal emulators keep function keys for
+// themselves, and htop/mc/vim use them too, so a press both did the
+// program's job and jumped panes). Moving between panes goes through
+// the title bar instead, where a key can be handled without leaking
+// anywhere: Ctrl+\ in a Terminal pane (its release key, reported to
+// Update as tui.ReleaseMsg) lands on that pane's own title bar, whose
+// n/p/1-9/a keys (see navKeyMsg) then jump focus straight into another
+// pane's content. Panes are arranged in a layout tree (see splitNode), not a flat
 // list; every node in that tree — interior split or pane leaf — keeps
 // an explicit, stable key at every level: reconcile.go's key matching
 // is scoped per-parent, so an unkeyed ancestor whose position (or, here,
@@ -525,8 +527,8 @@ func adjustWeight(n *splitNode, targetPaneID int, delta int) bool {
 // right document order tui's own reconciler visits the tree in
 // (matching renderSplit's traversal exactly, since both walk
 // n.children in the same stored order) — this is the order Tab
-// visits panes in, and so also the order F1-F9's pane numbering and
-// Update's input.KeyEvent case rely on.
+// visits panes in, and so also the order the title bars' [N] numbering
+// and navKeyMsg's n/p/digit keys rely on.
 func (m Model) paneOrder() []int {
 	var order []int
 	var walk func(n *splitNode)
@@ -561,6 +563,89 @@ func addPaneTarget(m Model) (int, bool) {
 	return order[len(order)-1], true
 }
 
+// releasedFromTerminal reports whether key is a pane's Terminal-content
+// key (paneKey(id, "term")) — the only widget that releases focus via
+// tui.ReleaseMsg.
+func releasedFromTerminal(key any) bool {
+	s, ok := key.(string)
+	return ok && strings.HasPrefix(s, "pane-") && strings.HasSuffix(s, "-term")
+}
+
+// focusPane returns a Cmd focusing pane id's content, first making sure
+// it can actually be seen: a minimized pane is restored, and while a
+// pane is zoomed the zoom follows focus to the target instead of
+// leaving focus on a collapsed, invisible pane. Its focus index comes
+// from the same layout controlStripFocusables documents: every pane
+// contributes its title bar then its content, in paneOrder().
+func (m Model) focusPane(id int) (tui.Model, tui.Cmd) {
+	pos := -1
+	for i, pid := range m.paneOrder() {
+		if pid == id {
+			pos = i
+			break
+		}
+	}
+	p := m.find(id)
+	if pos < 0 || p == nil {
+		return m, nil
+	}
+	p.minimized = false
+	if m.zoomedID != 0 {
+		m.zoomedID = id
+	}
+	return m, tui.SetFocusCmd(m.controlStripFocusables() + pos*2 + 1)
+}
+
+// navKeyMsg maps a key pressed on pane id's title bar to the Msg that
+// navigates: n/Right/Down and p/Left/Up step to the next/previous pane
+// in document order (wrapping), 1-9 pick pane N (matching the [N] in
+// each title bar), a goes to the control strip, and Esc or Ctrl+\ go
+// back into this pane. Any navigation lands directly in the target's
+// content, one keystroke after Ctrl+\ — there is no separate mode to
+// leave, since focus itself is the mode. Letters and digits require no
+// Ctrl/Alt so they can't shadow a modified chord; nil means the key
+// isn't a navigation key.
+func (m Model) navKeyMsg(id int, ke input.KeyEvent) tui.Msg {
+	order := m.paneOrder()
+	pos := -1
+	for i, pid := range order {
+		if pid == id {
+			pos = i
+		}
+	}
+	if pos < 0 {
+		return nil
+	}
+	if ke.Key == input.KeyEsc || ke == (input.KeyEvent{Rune: '\\', Mod: input.ModCtrl}) {
+		return focusPaneMsg{id: id}
+	}
+	step := func(delta int) tui.Msg {
+		return focusPaneMsg{id: order[(pos+delta+len(order))%len(order)]}
+	}
+	switch ke.Key {
+	case input.KeyRight, input.KeyDown:
+		return step(1)
+	case input.KeyLeft, input.KeyUp:
+		return step(-1)
+	}
+	if ke.Key != input.KeyNone || ke.Mod&(input.ModCtrl|input.ModAlt) != 0 {
+		return nil
+	}
+	switch {
+	case ke.Rune == 'n':
+		return step(1)
+	case ke.Rune == 'p':
+		return step(-1)
+	case ke.Rune == 'a':
+		return focusControlStripMsg{}
+	case ke.Rune >= '1' && ke.Rune <= '9':
+		if n := int(ke.Rune - '0'); n <= len(order) {
+			return focusPaneMsg{id: order[n-1]}
+		}
+	}
+	return nil
+}
+
 // otherDirection flips Horizontal<->Vertical — see Model.nextSplitDir.
 func otherDirection(d layout.Direction) layout.Direction {
 	if d == layout.Horizontal {
@@ -575,17 +660,6 @@ func otherAppearance(a style.Appearance) style.Appearance {
 		return style.Light
 	}
 	return style.Dark
-}
-
-// fKeyPaneNumber reports the 1-indexed pane number an F-key requests
-// (F1 -> 1, ... F9 -> 9), or false for any other key. Capped at F9/9
-// panes on purpose: beyond that, a dedicated F-key per pane stops
-// being a usable mnemonic anyway.
-func fKeyPaneNumber(k input.Key) (int, bool) {
-	if k >= input.KeyF1 && k <= input.KeyF9 {
-		return int(k-input.KeyF1) + 1, true
-	}
-	return 0, false
 }
 
 // Init kicks off the first redrawTickCmd if any seed pane exists, plus
@@ -604,6 +678,12 @@ func (m Model) Init() tui.Cmd {
 }
 
 type toggleMinimizeMsg struct{ id int }
+
+// focusPaneMsg moves keyboard focus into pane id's content — produced
+// by a title bar's navigation keys (navKeyMsg). focusControlStripMsg
+// does the same for the control strip's first button.
+type focusPaneMsg struct{ id int }
+type focusControlStripMsg struct{}
 type closePaneMsg struct{ id int }
 
 // beginSplitMsg starts the two-step split flow on id's title bar: dir
@@ -662,21 +742,20 @@ func AddPane(s Spec) tui.Msg { return addPaneMsg{spec: s} }
 
 func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch mm := msg.(type) {
-	case input.KeyEvent:
-		// Every input.Event reaches Update via App.HandleInput's
-		// unconditional Dispatch, regardless of which widget currently
-		// has focus (see this file's own doc comment on why F1-F9
-		// specifically are safe to treat as a real global hotkey here).
-		// n is 1-indexed to match the F-key number shown in each title
-		// bar's "[F#]" prefix (paneNode); paneOrder()'s Nth entry sits
-		// at focus index controlStripFocusables + (N-1)*2, since every
-		// pane contributes exactly two consecutive focusables (its
-		// title bar, then its content) in that same document order.
-		if n, ok := fKeyPaneNumber(mm.Key); ok {
-			if order := m.paneOrder(); n <= len(order) {
-				return m, tui.SetFocusCmd(m.controlStripFocusables() + (n-1)*2)
-			}
+	case tui.ReleaseMsg:
+		// Ctrl+\ in a Terminal pane. tui has already moved focus onward
+		// (to the next pane's title bar, or the control strip); steer it
+		// to this pane's own title bar instead, which is the navigation
+		// home (see navKeyMsg). The title bar sits immediately before
+		// its content in focus order — the same two-focusables-per-pane
+		// layout focusPane's index math relies on.
+		if releasedFromTerminal(mm.FromKey) && mm.FromIndex > 0 {
+			return m, tui.SetFocusCmd(mm.FromIndex - 1)
 		}
+	case focusPaneMsg:
+		return m.focusPane(mm.id)
+	case focusControlStripMsg:
+		return m, tui.SetFocusCmd(0)
 	case closePaneMsg:
 		return m.closePane(mm.id)
 	case beginSplitMsg:
@@ -789,9 +868,9 @@ func max0(v int) int {
 // ---- view ----
 
 func (m Model) View() tui.Node {
-	// numbers is computed once per frame from the same paneOrder() Update
-	// relies on for F1-F9 — one source of truth for "which pane is
-	// number N", not two traversals that could drift apart.
+	// numbers is computed once per frame from the same paneOrder() that
+	// navKeyMsg's digit keys resolve against — one source of truth for
+	// "which pane is number N", not two traversals that could drift apart.
 	numbers := make(map[int]int, len(m.panes))
 	for i, id := range m.paneOrder() {
 		numbers[id] = i + 1
@@ -920,7 +999,7 @@ func splitKey(id int) string { return fmt.Sprintf("split-%d", id) }
 // controlStripFocusables is how many Tab-focusable widgets
 // controlStrip contributes, ahead of any pane, in Tab order — one per
 // configured preset, plus help/theme/quit. Used by InitialFocusAdvances
-// and the F1-F9 focus-jump math, since tui ties Tab order to document/
+// and the focus-jump math in focusPane, since tui ties Tab order to document/
 // paint order with no independent override.
 func (m Model) controlStripFocusables() int {
 	return len(m.presets) + 3 // + help, theme, quit
@@ -1055,10 +1134,10 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 		if p.browseCompanion != nil {
 			hint += "/b"
 		}
-		label += "  (" + hint + ")"
+		label += "  (" + hint + ") go:n/p/1-9/a"
 	}
 	if number >= 1 && number <= 9 {
-		label = fmt.Sprintf("[F%d] ", number) + label
+		label = fmt.Sprintf("[%d] ", number) + label
 	}
 	if m.zoomedID == id {
 		label += " [zoomed]"
@@ -1093,6 +1172,9 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 						return splitPaneMsg{id: id, dir: layout.Horizontal, spec: spec}
 					}
 					return cancelSplitMsg{id: id}
+				}
+				if msg := m.navKeyMsg(id, ke); msg != nil {
+					return msg
 				}
 				switch ke.Rune {
 				case 'x':
@@ -1129,7 +1211,8 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 			// Every pty-hosted pane needs tab-completion to work, so Tab
 			// must reach it rather than being intercepted for focus
 			// navigation. ReleaseKey is left at its default (Ctrl+\), the
-			// way out to Tab-navigate title bars/buttons again.
+			// way out: Update turns its tui.ReleaseMsg into focus on this
+			// pane's own title bar, where navKeyMsg's keys take over.
 			WantsRawTab: true,
 			// Themes the "[scrollback N/M]" indicator Terminal draws
 			// while scrolled back, so it matches the rest of 9mux's

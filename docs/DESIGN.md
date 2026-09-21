@@ -20,7 +20,7 @@ it is, and where its code came from. If you just want to use 9mux, see
   flow.** The original design's `s`/`k`/`b`/`j`/`h` letters worked
   because there were exactly 5 fixed kinds. Presets here are an
   arbitrary, user-configured, unbounded list — digits (1-9, matching
-  the same F1-F9 pane-jump convention already used elsewhere) are the
+  the `1`-`9` pane-jump keys already used elsewhere) are the
   only mapping that doesn't need per-preset mnemonic assignment or
   collision handling.
 - **The redraw tick isn't Kind-gated.** The original needed to check
