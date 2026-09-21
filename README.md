@@ -93,6 +93,10 @@ pointed at a 9P server — add presets to `~/.config/9mux/config`; see
 | `a` | Jump focus to the control strip |
 | `Esc` / `Ctrl+\` | Go back into this pane (so does `Tab`) |
 
+A title bar that has keyboard focus is drawn in reverse video, so you
+can tell it from a pane whose shell has focus — letters on a title bar
+are commands (`x` closes the pane), not text for the shell.
+
 Any of the jump keys lands directly in the target pane's content. A
 minimized pane is restored, and while a pane is zoomed the zoom follows
 focus to the target.

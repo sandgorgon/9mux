@@ -8,6 +8,14 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- A pane's title bar is drawn in reverse video while it has keyboard
+  focus itself. It previously looked the same as when focus was in the
+  pane's content, but the two route keys differently: on the title bar
+  letters are commands (`x` closes the pane, `d`/`r` split, `n`/`p`/`1`-`9`
+  navigate), in the content they go to the hosted process.
+
 ## [0.2.0] - 2026-09-20
 
 ### Changed

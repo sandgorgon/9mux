@@ -1,12 +1,14 @@
 package mux
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sandgorgon/tui/cell"
 	"github.com/sandgorgon/tui/input"
 	"github.com/sandgorgon/tui/layout"
 	"github.com/sandgorgon/tui/tui"
@@ -1449,5 +1451,58 @@ func TestCtrlBackslashThenNMovesTypingToNextShell(t *testing.T) {
 	waitForText(t, app, "B-GOT:hi", 3*time.Second)
 	if strings.Contains(app.Buffer().String(), "A-GOT") {
 		t.Fatalf("typed text reached pane a's shell instead of b's:\n%s", app.Buffer().String())
+	}
+}
+
+// titleLabelAttr returns the style attribute of the first cell of pane
+// number's "[N]" title label on screen.
+func titleLabelAttr(t *testing.T, app *tui.App, number int) cell.Attr {
+	t.Helper()
+	label := fmt.Sprintf("[%d]", number)
+	buf := app.Buffer()
+	for y := 0; y < 24; y++ {
+		var row strings.Builder
+		for x := 0; x < 100; x++ {
+			r := buf.At(x, y).Rune
+			if r == 0 {
+				r = ' '
+			}
+			row.WriteRune(r)
+		}
+		if i := strings.Index(row.String(), label); i >= 0 {
+			return buf.At(i, y).Style.Attr
+		}
+	}
+	t.Fatalf("no %s title label on screen:\n%s", label, buf.String())
+	return 0
+}
+
+// TestTitleBarFocusIsVisiblyDistinctFromContentFocus: with focus on a
+// pane's title bar, letters are commands (x closes it); with focus in
+// its content they go to the shell. The two must look different, or a
+// user can't tell which they're in. Only the focused title bar itself
+// gets reverse video; the same pane with content focus, and other
+// panes' title bars, don't.
+func TestTitleBarFocusIsVisiblyDistinctFromContentFocus(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+
+	app.SetFocus(paneContentIndex(m, 0))
+	if titleLabelAttr(t, app, 1)&cell.AttrReverse != 0 {
+		t.Error("pane 1's title bar is reverse-video while focus is in its content")
+	}
+
+	app.SetFocus(paneTitleIndex(m, 0))
+	if titleLabelAttr(t, app, 1)&cell.AttrReverse == 0 {
+		t.Error("pane 1's title bar isn't reverse-video while it has focus itself")
+	}
+	if titleLabelAttr(t, app, 2)&cell.AttrReverse != 0 {
+		t.Error("pane 2's title bar is reverse-video although focus is on pane 1's")
+	}
+
+	app.SetFocus(paneContentIndex(m, 0))
+	if titleLabelAttr(t, app, 1)&cell.AttrReverse != 0 {
+		t.Error("the reverse-video cue didn't clear after focus moved back into the content")
 	}
 }
