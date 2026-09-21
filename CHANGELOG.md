@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-20
+
 ### Changed
 
 - Moving focus between panes is now `Ctrl+\` then a navigation key,
