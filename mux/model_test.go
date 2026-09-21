@@ -746,37 +746,20 @@ func TestFKeysAreNotBindings(t *testing.T) {
 	}
 }
 
-// findFocusMsg unwraps a possible tui.BatchMsg to find it: testSpec's
-// panes run "true", which exits almost instantly, and since tui v0.6.1
-// (App.Dispatch draining every widget's tui.PendingMsgSource on every
-// Dispatch, not just the focused one's — see 9mux's own go.mod bump)
-// an already-exited pane's OnExit Msg can legitimately ride along in
-// the same Cmd as this F2 press's FocusMsg, batched together. That's
-// correct behavior, not a regression to work around by asserting a
-// single bare Cmd.
-func findFocusMsg(t *testing.T, msg tui.Msg) tui.FocusMsg {
-	t.Helper()
-	switch m := msg.(type) {
-	case tui.FocusMsg:
-		return m
-	case tui.BatchMsg:
-		for _, c := range m {
-			if c == nil {
-				continue
-			}
-			if fm, ok := c().(tui.FocusMsg); ok {
-				return fm
-			}
-		}
-	}
-	t.Fatalf("expected a tui.FocusMsg (bare or inside a tui.BatchMsg), got %T", msg)
-	return tui.FocusMsg{}
-}
-
 // paneTitleIndex and paneContentIndex are the focus indices of the
 // pane at 0-based document position pos (see focusPane).
 func paneTitleIndex(m Model, pos int) int   { return m.controlStripFocusables() + pos*2 }
 func paneContentIndex(m Model, pos int) int { return paneTitleIndex(m, pos) + 1 }
+
+// requestedFocus runs msg through Update and returns the focus index it
+// asked for, plus the Cmd it returned. Focus moves are requested through
+// tui.FocusRequester, not a Cmd, so keys already waiting behind the one
+// that asked can't be routed to the widget focus was leaving.
+func requestedFocus(m Model, msg tui.Msg) (idx int, ok bool, cmd tui.Cmd) {
+	next, cmd := m.Update(msg)
+	idx, ok = next.(Model).RequestedFocus()
+	return idx, ok, cmd
+}
 
 // TestReleaseFromTerminalLandsOnOwnTitleBar: Ctrl+\ (tui.ReleaseMsg)
 // in pane b's Terminal must steer focus to pane b's own title bar, not
@@ -786,16 +769,15 @@ func TestReleaseFromTerminalLandsOnOwnTitleBar(t *testing.T) {
 	id := m.paneOrder()[1]
 	from := paneContentIndex(m, 1)
 
-	_, cmd := m.Update(tui.ReleaseMsg{FromIndex: from, FromKey: paneKey(id, "term")})
-	if cmd == nil {
-		t.Fatal("expected a Cmd steering focus")
-	}
-	fm, ok := cmd().(tui.FocusMsg)
+	idx, ok, cmd := requestedFocus(m, tui.ReleaseMsg{FromIndex: from, FromKey: paneKey(id, "term")})
 	if !ok {
-		t.Fatalf("expected tui.FocusMsg, got %T", cmd())
+		t.Fatal("expected a focus request")
 	}
-	if want := paneTitleIndex(m, 1); fm.Index != want {
-		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", fm.Index, want)
+	if want := paneTitleIndex(m, 1); idx != want {
+		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", idx, want)
+	}
+	if cmd != nil {
+		t.Errorf("the request must not also come with a Cmd, got %v", cmd())
 	}
 }
 
@@ -804,15 +786,31 @@ func TestReleaseFromTerminalLandsOnOwnTitleBar(t *testing.T) {
 func TestReleaseFromNonTerminalIsIgnored(t *testing.T) {
 	m := newTestModel(testSpec("a"))
 	for _, key := range []any{nil, "quit-btn", 42, paneKey(1, "title")} {
-		if _, cmd := m.Update(tui.ReleaseMsg{FromIndex: 3, FromKey: key}); cmd != nil {
-			t.Errorf("FromKey %v produced a Cmd, want none", key)
+		if _, ok, cmd := requestedFocus(m, tui.ReleaseMsg{FromIndex: 3, FromKey: key}); ok || cmd != nil {
+			t.Errorf("FromKey %v produced a request or Cmd, want neither", key)
 		}
 	}
 }
 
+// TestFocusRequestIsClearedByTheNextUpdate: a request belongs to the
+// Update that made it. Left set, every later Update (the 50ms redraw
+// tick, for one) would drag focus back.
+func TestFocusRequestIsClearedByTheNextUpdate(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	next, _ := m.Update(focusControlStripMsg{})
+	if _, ok := next.(Model).RequestedFocus(); !ok {
+		t.Fatal("expected a request from focusControlStripMsg")
+	}
+	next, _ = next.(Model).Update(redrawTickMsg{})
+	if idx, ok := next.(Model).RequestedFocus(); ok {
+		t.Fatalf("a later Update still reports a focus request (index %d)", idx)
+	}
+}
+
 // TestReleaseKeyEndToEnd drives the real input path: with focus on pane
-// b's Terminal, a real Ctrl+\ must end with a focus request for pane
-// b's own title bar (tui's own moveFocus would have chosen pane c's).
+// b's Terminal, a real Ctrl+\ must leave focus on pane b's own title bar
+// (tui's own moveFocus would have chosen pane c's) as soon as HandleInput
+// returns, with no Cmd run in between.
 func TestReleaseKeyEndToEnd(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
 	app := tui.NewApp(m, 80, 24)
@@ -821,40 +819,11 @@ func TestReleaseKeyEndToEnd(t *testing.T) {
 		t.Fatal("could not focus pane b's content")
 	}
 
-	cmds := app.HandleInput(input.KeyEvent{Rune: '\\', Mod: input.ModCtrl})
-	var fm tui.FocusMsg
-	found := false
-	for _, c := range cmds {
-		if c == nil {
-			continue
-		}
-		if fm, found = findFocusMsgOK(c()); found {
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no FocusMsg among %d Cmds", len(cmds))
-	}
-	if want := paneTitleIndex(m, 1); fm.Index != want {
-		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", fm.Index, want)
-	}
-}
+	app.HandleInput(input.KeyEvent{Rune: '\\', Mod: input.ModCtrl})
 
-func findFocusMsgOK(msg tui.Msg) (tui.FocusMsg, bool) {
-	switch m := msg.(type) {
-	case tui.FocusMsg:
-		return m, true
-	case tui.BatchMsg:
-		for _, c := range m {
-			if c == nil {
-				continue
-			}
-			if fm, ok := findFocusMsgOK(c()); ok {
-				return fm, true
-			}
-		}
+	if got, want := app.FocusIndex(), paneTitleIndex(m, 1); got != want {
+		t.Fatalf("focus index = %d, want %d (pane b's own title bar)", got, want)
 	}
-	return tui.FocusMsg{}, false
 }
 
 func TestNavKeyMsg(t *testing.T) {
@@ -903,19 +872,19 @@ func TestNavKeyMsg(t *testing.T) {
 func TestFocusPaneTargetsContent(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"), testSpec("c"))
 	for pos, id := range m.paneOrder() {
-		_, cmd := m.Update(focusPaneMsg{id: id})
-		if cmd == nil {
-			t.Fatalf("pane %d: expected a focus Cmd", pos)
+		idx, ok, _ := requestedFocus(m, focusPaneMsg{id: id})
+		if !ok {
+			t.Fatalf("pane %d: expected a focus request", pos)
 		}
-		if got, want := cmd().(tui.FocusMsg).Index, paneContentIndex(m, pos); got != want {
-			t.Errorf("pane %d: focus index = %d, want %d", pos, got, want)
+		if want := paneContentIndex(m, pos); idx != want {
+			t.Errorf("pane %d: focus index = %d, want %d", pos, idx, want)
 		}
 	}
-	if _, cmd := m.Update(focusPaneMsg{id: 999}); cmd != nil {
-		t.Errorf("unknown pane produced a Cmd, want none")
+	if _, ok, _ := requestedFocus(m, focusPaneMsg{id: 999}); ok {
+		t.Errorf("unknown pane produced a focus request, want none")
 	}
-	if _, cmd := m.Update(focusControlStripMsg{}); cmd == nil || cmd().(tui.FocusMsg).Index != 0 {
-		t.Errorf("focusControlStripMsg should focus index 0")
+	if idx, ok, _ := requestedFocus(m, focusControlStripMsg{}); !ok || idx != 0 {
+		t.Errorf("focusControlStripMsg = (%d, %v), want (0, true)", idx, ok)
 	}
 }
 
@@ -945,7 +914,9 @@ func TestFocusPaneRestoresMinimizedAndMovesZoom(t *testing.T) {
 }
 
 // TestTitleBarNavKeyEndToEnd drives the real input path: with focus on
-// pane a's title bar, pressing 2 must request focus on pane b's content.
+// pane a's title bar, pressing 2 must leave focus on pane b's content
+// by the time the key's own Msg has been dispatched (as Run resolves a
+// widget's Cmd), with nothing left to run afterwards.
 func TestTitleBarNavKeyEndToEnd(t *testing.T) {
 	m := newTestModel(testSpec("a"), testSpec("b"))
 	app := tui.NewApp(m, 80, 16)
@@ -954,25 +925,16 @@ func TestTitleBarNavKeyEndToEnd(t *testing.T) {
 		t.Fatal("could not focus pane a's title bar")
 	}
 
-	var got tui.FocusMsg
-	found := false
 	for _, c := range app.HandleInput(input.KeyEvent{Rune: '2'}) {
 		if c == nil {
 			continue
 		}
-		// The title bar's widget Cmd yields focusPaneMsg; Update turns
-		// that into the focus request.
-		if follow := app.Dispatch(c()); follow != nil {
-			if fm, ok := findFocusMsgOK(follow()); ok {
-				got, found = fm, true
-			}
-		}
+		// The title bar's widget Cmd yields focusPaneMsg; Update asks for
+		// focus, and tui applies it inside this Dispatch.
+		app.Dispatch(c())
 	}
-	if !found {
-		t.Fatal("no FocusMsg from pressing 2 on a title bar")
-	}
-	if want := paneContentIndex(m, 1); got.Index != want {
-		t.Fatalf("focus index = %d, want %d (pane b's content)", got.Index, want)
+	if got, want := app.FocusIndex(), paneContentIndex(m, 1); got != want {
+		t.Fatalf("focus index = %d, want %d (pane b's content)", got, want)
 	}
 }
 

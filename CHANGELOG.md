@@ -15,6 +15,17 @@ once a first tagged release is cut.
   pane's content, but the two route keys differently: on the title bar
   letters are commands (`x` closes the pane, `d`/`r` split, `n`/`p`/`1`-`9`
   navigate), in the content they go to the hosted process.
+- Pane navigation now moves focus synchronously (via tui's new
+  `FocusRequester`, tui v0.11.0) instead of through a `tui.SetFocusCmd`.
+  Keys that arrive in the same burst as `Ctrl+\` or a navigation key —
+  pasted text, type-ahead, a key macro — used to be routed before the
+  focus change landed, so they reached the title bar the user was
+  leaving, where letters are commands (`x` closes the pane, `d`/`r`
+  split). Found driving 9mux through a real pty: with no gap between
+  keys, 11 of 12 `Ctrl+\ n <text>` rounds were garbled and a stray
+  pane was split off; with the fix, 0 of 12.
+- Bump `sandgorgon/tui` from v0.10.0 to v0.11.0: adds the optional
+  `FocusRequester` interface the synchronous focus moves above use.
 
 ## [0.2.0] - 2026-09-20
 
