@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-22
+
 ### Changed
 
 - A focused pane's title bar now shows a `●` marker (right before its
