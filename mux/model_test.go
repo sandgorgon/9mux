@@ -954,6 +954,39 @@ func TestPaneTitleShowsNumberLabel(t *testing.T) {
 	}
 }
 
+// TestPaneTitleShowsFocusMarkerForColourBlindReaders confirms the text
+// cue paneNode now prepends to a focused pane's title (see its own
+// comment) actually reaches the screen, alongside -- not instead of --
+// the existing focus colour, and that it moves with focus rather than
+// staying stuck on whichever pane happened to render it first.
+func TestPaneTitleShowsFocusMarkerForColourBlindReaders(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	app := tui.NewApp(m, 80, 16)
+	defer app.Close()
+
+	if !app.SetFocus(paneContentIndex(m, 0)) {
+		t.Fatal("could not focus pane a's content")
+	}
+	buf := app.Buffer().String()
+	if !strings.Contains(buf, "● [1]") {
+		t.Fatalf("expected the focus marker directly before pane 1's [1] label while it has focus:\n%s", buf)
+	}
+	if strings.Contains(buf, "● [2]") {
+		t.Fatalf("pane 2 should not show the focus marker while unfocused:\n%s", buf)
+	}
+
+	if !app.SetFocus(paneContentIndex(m, 1)) {
+		t.Fatal("could not focus pane b's content")
+	}
+	buf = app.Buffer().String()
+	if strings.Contains(buf, "● [1]") {
+		t.Fatalf("pane 1 should lose the focus marker once focus moves away:\n%s", buf)
+	}
+	if !strings.Contains(buf, "● [2]") {
+		t.Fatalf("expected the focus marker to move to pane 2's [2] label:\n%s", buf)
+	}
+}
+
 func TestSplittingLiveShellPanePreservesItsProcess(t *testing.T) {
 	skipUnlessOnPath(t, "sh")
 	cmd := []string{"sh", "-c", "echo READY; read x; echo GOT:$x"}

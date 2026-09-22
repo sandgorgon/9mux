@@ -96,7 +96,11 @@ pointed at a 9P server — add presets to `~/.config/9mux/config`; see
 A title bar that has keyboard focus itself is drawn in its own colour
 (purple by default), so you can tell it from a pane whose shell has
 focus (blue) — letters on a title bar
-are commands (`x` closes the pane), not text for the shell.
+are commands (`x` closes the pane), not text for the shell. Either way,
+the focused pane's title also shows a `●` marker (right before its
+`[N]` label, in place of the two blank spaces an unfocused title shows
+there) as a colour-independent cue, for readers who can't rely on the
+colour alone to tell it apart from an unfocused pane.
 
 Any of the jump keys lands directly in the target pane's content. A
 minimized pane is restored, and while a pane is zoomed the zoom follows

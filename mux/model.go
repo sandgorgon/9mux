@@ -1176,6 +1176,18 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 	if p.browse != nil && p.browse.killMsg != "" {
 		label += "  " + p.browse.killMsg
 	}
+	// A text cue alongside the focus color (theme.Focus/theme.Secondary
+	// vs theme.Border, picked below), not a replacement for it — v0.2.2
+	// made focus color-only, which a colour-blind reader can't
+	// distinguish from an unfocused pane. Fixed-width ("● "/"  ") so the
+	// rest of the label doesn't shift left/right as focus moves, the
+	// same reason chevron above is always 2 runes wide regardless of
+	// canMinimize/minimized state.
+	focusMarker := "  "
+	if m.paneHasFocus(id) {
+		focusMarker = "● "
+	}
+	label = focusMarker + label
 	collapsed := canMinimize && p.minimized
 	titleFill := ' '
 	if !collapsed {

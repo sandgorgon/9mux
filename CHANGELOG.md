@@ -8,6 +8,13 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- A focused pane's title bar now shows a `●` marker (right before its
+  `[N]` label) alongside the existing focus colour, not instead of it —
+  a colour-independent cue for readers who can't rely on colour alone
+  to tell a focused pane's title apart from an unfocused one.
+
 ## [0.2.2] - 2026-09-20
 
 ### Changed
