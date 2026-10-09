@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-09
+
 ### Changed
 
 - A zoomed pane now hides the control strip, leaving just its own
