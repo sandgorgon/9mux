@@ -84,7 +84,7 @@ pointed at a 9P server — add presets to `~/.config/9mux/config`; see
 | `x` | Close this pane |
 | `d` | Split down, then pick a preset by digit (anything else cancels) |
 | `r` | Split right (same digit-picker as `d`) |
-| `z` | Zoom/un-zoom this pane to fill the whole screen |
+| `z` | Zoom/un-zoom this pane to fill the whole screen (hides the control strip; `a` un-zooms and goes there) |
 | `b` | *(command presets with a paired `<name>.browse =` config line only)* then `d`/`r` for direction: split off a 9P-browsing pane pointed at this pane's own socket |
 | `+` / `-` | Resize this pane along its split axis, down to one visible content line — smaller than that, minimize instead |
 | click / Enter | Minimize/restore (only along a vertical split axis) |

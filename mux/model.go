@@ -771,6 +771,10 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	case focusPaneMsg:
 		return m.focusPane(mm.id)
 	case focusControlStripMsg:
+		// The strip is hidden while a pane is zoomed (see View), so
+		// reaching it means leaving zoom -- otherwise focus would land
+		// on an invisible button.
+		m.zoomedID = 0
 		m.focusReq = 1 // index 0, stored +1
 		return m, nil
 	case closePaneMsg:
@@ -892,8 +896,17 @@ func (m Model) View() tui.Node {
 	for i, id := range m.paneOrder() {
 		numbers[id] = i + 1
 	}
+	// A zoomed pane drops the control strip so it reads as a plain
+	// terminal under its own title bar. Length(0), not omitted: the
+	// strip's focusables must stay in the tree, since focus indexes
+	// (focusPane, InitialFocusAdvances) count them -- same reason
+	// childConstraint collapses zoom's siblings instead of removing them.
+	stripHeight := 1
+	if m.zoomedID != 0 {
+		stripHeight = 0
+	}
 	return tui.Box(layout.Vertical,
-		tui.Child(layout.Length(1), m.controlStrip()),
+		tui.Child(layout.Length(stripHeight), m.controlStrip()),
 		// true: m.root is always a Vertical split (New's own doc comment)
 		// and is never itself a leaf, so this only ever matters for
 		// root's direct children — matching reality, they can minimize.
@@ -1157,6 +1170,10 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 		label += "  split: " + presetHint(m.presets) + " (else cancel)"
 	case p.awaitingBrowseSplit:
 		label += "  browse split: d/r (else cancel)"
+	case m.zoomedID == id:
+		// Shortened: this is the only chrome left on screen. Every title-
+		// bar key still works; only the cheat-sheet is trimmed.
+		label += "  (z unzoom, a menu)"
 	default:
 		hint := "x/d/r/z/+/-"
 		if p.browseCompanion != nil {

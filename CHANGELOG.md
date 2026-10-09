@@ -8,6 +8,12 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- A zoomed pane now hides the control strip, leaving just its own
+  (shortened) title bar over the terminal. Every title-bar key still
+  works; `a` un-zooms and jumps to the control strip.
+
 ## [0.2.3] - 2026-09-22
 
 ### Changed

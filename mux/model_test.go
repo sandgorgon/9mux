@@ -1549,3 +1549,36 @@ func TestChromeNeverUsesReverseVideo(t *testing.T) {
 		}
 	}
 }
+
+func TestZoomHidesControlStripAndAUnzoomsToIt(t *testing.T) {
+	m := newTestModel(testSpec("a"))
+	id := m.panes[0].id
+	next, _ := m.Update(splitPaneMsg{id: id, dir: layout.Horizontal, spec: testSpec("b")})
+	m = next.(Model)
+	next, _ = m.Update(toggleZoomMsg{id: id})
+	m = next.(Model)
+
+	app := tui.NewApp(m, 60, 10)
+	defer app.Close()
+	forceRenders(app, 1)
+	buf := app.Buffer()
+	row0 := ""
+	for x := 0; x < 60; x++ {
+		row0 += string(buf.At(x, 0).Rune)
+	}
+	if strings.Contains(row0, "quit") || strings.Contains(row0, "theme") {
+		t.Errorf("control strip still visible while zoomed: %q", row0)
+	}
+	if !strings.Contains(row0, "[zoomed]") {
+		t.Errorf("zoomed pane's title bar should be the top row, got %q", row0)
+	}
+
+	next, _ = m.Update(focusControlStripMsg{})
+	m = next.(Model)
+	if m.zoomedID != 0 {
+		t.Error("focusing the control strip should leave zoom")
+	}
+	if idx, ok := m.RequestedFocus(); !ok || idx != 0 {
+		t.Errorf("RequestedFocus = %d,%v, want 0,true", idx, ok)
+	}
+}
