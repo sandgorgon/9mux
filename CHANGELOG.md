@@ -8,6 +8,8 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-15
+
 ### Changed
 
 - It's now clear whether a pane's content or its title bar has focus.
