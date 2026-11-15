@@ -93,14 +93,21 @@ pointed at a 9P server — add presets to `~/.config/9mux/config`; see
 | `a` | Jump focus to the control strip |
 | `Esc` / `Ctrl+\` | Go back into this pane (so does `Tab`) |
 
-A title bar that has keyboard focus itself is drawn in its own colour
-(purple by default), so you can tell it from a pane whose shell has
-focus (blue) — letters on a title bar
-are commands (`x` closes the pane), not text for the shell. Either way,
-the focused pane's title also shows a `●` marker (right before its
-`[N]` label, in place of the two blank spaces an unfocused title shows
-there) as a colour-independent cue, for readers who can't rely on the
-colour alone to tell it apart from an unfocused pane.
+A focused pane is in one of two states, and they route keys
+differently, so each looks different. In each, the highlighted part is
+the part that gets your keystrokes:
+
+| | Pane content has focus | Title bar has focus (CMD mode) |
+| --- | --- | --- |
+| Keys go to | The hosted program | 9mux: letters are commands (`x` closes the pane) |
+| Marker before `[N]` | `●` | `▶` |
+| Title text | Only the way in: `Ctrl+\ commands` (`Shift+Tab commands` in a browsing pane) | A `CMD` tag, the command keys, and `Esc back` |
+| Title bar colour | Blue | Purple (by default) |
+| Pane frame | Lit in the focus colour | Muted, like an unfocused pane |
+
+An unfocused pane shows no marker and no hints. The markers and the
+`CMD` tag are there so the state never depends on telling colours
+apart.
 
 Any of the jump keys lands directly in the target pane's content. A
 minimized pane is restored, and while a pane is zoomed the zoom follows

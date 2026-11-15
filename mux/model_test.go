@@ -511,8 +511,8 @@ func TestSplitKeysOnTitleBar(t *testing.T) {
 	forceRenders(app, 2)
 
 	buf := app.Buffer().String()
-	if n := strings.Count(buf, "x/d/r/z/+/-"); n != 2 {
-		t.Fatalf("expected 2 title bars after splitting, found %d:\n%s", n, buf)
+	if !strings.Contains(buf, "[1] ") || !strings.Contains(buf, "[2] ") {
+		t.Fatalf("expected 2 title bars ([1] and [2]) after splitting:\n%s", buf)
 	}
 }
 
@@ -535,12 +535,14 @@ func TestTitleBarBKeyOpensBrowseCompanion(t *testing.T) {
 	defer app.Close()
 	forceRenders(app, 1)
 
-	if buf := app.Buffer().String(); !strings.Contains(buf, "x/d/r/z/+/-/b") {
-		t.Fatalf("expected the 'b' hint on a pane with a BrowseCompanion:\n%s", buf)
-	}
-
 	for range m.controlStripFocusables() {
 		app.HandleInput(input.KeyEvent{Key: input.KeyTab})
+	}
+	forceRenders(app, 1)
+	// The command cheat-sheet only shows while the title bar itself has
+	// focus (CMD mode).
+	if buf := app.Buffer().String(); !strings.Contains(buf, "x/d/r/z/+/-/b") {
+		t.Fatalf("expected the 'b' hint on a pane with a BrowseCompanion:\n%s", buf)
 	}
 	for _, cmd := range app.HandleInput(input.KeyEvent{Rune: 'b'}) {
 		if cmd != nil {
@@ -561,8 +563,8 @@ func TestTitleBarBKeyOpensBrowseCompanion(t *testing.T) {
 	forceRenders(app, 2)
 
 	buf := app.Buffer().String()
-	if n := strings.Count(buf, "x/d/r/z/+/-"); n != 2 {
-		t.Fatalf("expected 2 title bars after 'b' then 'r', found %d:\n%s", n, buf)
+	if !strings.Contains(buf, "[1] ") || !strings.Contains(buf, "[2] ") {
+		t.Fatalf("expected 2 title bars ([1] and [2]) after 'b' then 'r':\n%s", buf)
 	}
 	if !strings.Contains(buf, "kyu (browse)") {
 		t.Fatalf("expected the new sibling's title to be %q:\n%s", "kyu (browse)", buf)
@@ -1580,5 +1582,89 @@ func TestZoomHidesControlStripAndAUnzoomsToIt(t *testing.T) {
 	}
 	if idx, ok := m.RequestedFocus(); !ok || idx != 0 {
 		t.Errorf("RequestedFocus = %d,%v, want 0,true", idx, ok)
+	}
+}
+
+// TestTitleShowsWhichFocusStateThePaneIsIn pins the three looks a pane
+// can have, which have to be told apart because they route keys
+// differently: content focused (● marker, only the "Ctrl+\ commands"
+// way in, frame lit in the focus color), title bar focused (▶ marker,
+// CMD tag and the command cheat-sheet, frame back to the muted color),
+// and unfocused (no marker, no hints).
+func TestTitleShowsWhichFocusStateThePaneIsIn(t *testing.T) {
+	m := newTestModel(testSpec("a"), testSpec("b"))
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+	frameBg := func() cell.Color {
+		// Pane a's left frame edge, one row below its title bar.
+		c := app.Buffer().At(0, 2)
+		if c.Rune != '│' {
+			t.Fatalf("expected pane a's left frame at (0,2), got %q:\n%s", c.Rune, app.Buffer().String())
+		}
+		return c.Style.Bg
+	}
+
+	if !app.SetFocus(paneContentIndex(m, 0)) {
+		t.Fatal("could not focus pane a's content")
+	}
+	buf := app.Buffer().String()
+	for _, want := range []string{"● [1]", `Ctrl+\ commands`} {
+		if !strings.Contains(buf, want) {
+			t.Errorf("content focused: missing %q:\n%s", want, buf)
+		}
+	}
+	for _, not := range []string{"CMD", "x/d/r/z", "▶"} {
+		if strings.Contains(buf, not) {
+			t.Errorf("content focused: should not show %q:\n%s", not, buf)
+		}
+	}
+	if got := frameBg(); got != m.theme.Focus {
+		t.Errorf("content focused: frame bg = %v, want Focus %v", got, m.theme.Focus)
+	}
+
+	if !app.SetFocus(paneTitleIndex(m, 0)) {
+		t.Fatal("could not focus pane a's title bar")
+	}
+	buf = app.Buffer().String()
+	for _, want := range []string{"▶ [1]", "CMD", "x/d/r/z/+/-", "Esc back"} {
+		if !strings.Contains(buf, want) {
+			t.Errorf("title focused: missing %q:\n%s", want, buf)
+		}
+	}
+	for _, not := range []string{"●", `Ctrl+\ commands`} {
+		if strings.Contains(buf, not) {
+			t.Errorf("title focused: should not show %q:\n%s", not, buf)
+		}
+	}
+	if got := frameBg(); got != m.theme.Border {
+		t.Errorf("title focused: frame bg = %v, want Border %v", got, m.theme.Border)
+	}
+
+	// Pane b stayed unfocused throughout: its title is just the label.
+	if strings.Count(buf, "[2]") != 1 || strings.Contains(buf, "● [2]") || strings.Contains(buf, "▶ [2]") {
+		t.Errorf("unfocused pane b should show no marker:\n%s", buf)
+	}
+}
+
+// TestBrowsePaneContentHintIsShiftTab: a browsing pane has no Ctrl+\
+// release key, so its content-focused hint names the key that does
+// reach its title bar.
+func TestBrowsePaneContentHintIsShiftTab(t *testing.T) {
+	m := newTestModel(Spec{Title: "browse", Browse: &BrowseSpec{Network: "tcp", Addr: "127.0.0.1:1"}})
+	app := tui.NewApp(m, 100, 16)
+	defer app.Close()
+	if !app.SetFocus(paneContentIndex(m, 0)) {
+		t.Fatal("could not focus the browse pane's content")
+	}
+	forceRenders(app, 1)
+	buf := app.Buffer().String()
+	if !strings.Contains(buf, "Shift+Tab commands") || strings.Contains(buf, `Ctrl+\ commands`) {
+		t.Fatalf("browse pane content focused: want the Shift+Tab hint only:\n%s", buf)
+	}
+	// ...and the hint is true: Shift+Tab really does reach CMD mode.
+	app.HandleInput(input.KeyEvent{Key: input.KeyTab, Mod: input.ModShift})
+	forceRenders(app, 1)
+	if buf := app.Buffer().String(); !strings.Contains(buf, "▶ [1]") || !strings.Contains(buf, "CMD") {
+		t.Fatalf("Shift+Tab from the browse pane's content should land on its title bar:\n%s", buf)
 	}
 }

@@ -1164,22 +1164,41 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 			chevron = "▸ "
 		}
 	}
+	// The title says which of the two focused states the pane is in,
+	// since they route keys differently (see the titleBar style
+	// callback below): on the title bar itself letters are commands, so
+	// it shows a CMD tag and the command cheat-sheet; with the content
+	// focused it shows only the key that gets you to the title bar,
+	// never a command list whose letters would go to the program
+	// instead. An unfocused pane shows neither.
+	titleFocused := m.titleHasFocus(id)
+	contentFocused := m.paneHasFocus(id) && !titleFocused
 	label := chevron + p.title
+	if titleFocused {
+		label += "  CMD"
+	}
 	switch {
 	case p.awaitingSplitKind:
 		label += "  split: " + presetHint(m.presets) + " (else cancel)"
 	case p.awaitingBrowseSplit:
 		label += "  browse split: d/r (else cancel)"
-	case m.zoomedID == id:
+	case titleFocused && m.zoomedID == id:
 		// Shortened: this is the only chrome left on screen. Every title-
 		// bar key still works; only the cheat-sheet is trimmed.
-		label += "  (z unzoom, a menu)"
-	default:
+		label += " (z unzoom, a menu)  Esc back"
+	case titleFocused:
 		hint := "x/d/r/z/+/-"
 		if p.browseCompanion != nil {
 			hint += "/b"
 		}
-		label += "  (" + hint + ") go:n/p/1-9/a"
+		label += " (" + hint + ") go:n/p/1-9/a  Esc back"
+	case contentFocused && p.browse != nil:
+		// A browsing pane has no release key (only a Terminal does —
+		// see releasedFromTerminal); its title bar is simply the
+		// previous focusable.
+		label += "  Shift+Tab commands"
+	case contentFocused:
+		label += "  Ctrl+\\ commands"
 	}
 	if number >= 1 && number <= 9 {
 		label = fmt.Sprintf("[%d] ", number) + label
@@ -1196,12 +1215,16 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 	// A text cue alongside the focus color (theme.Focus/theme.Secondary
 	// vs theme.Border, picked below), not a replacement for it — v0.2.2
 	// made focus color-only, which a colour-blind reader can't
-	// distinguish from an unfocused pane. Fixed-width ("● "/"  ") so the
-	// rest of the label doesn't shift left/right as focus moves, the
-	// same reason chevron above is always 2 runes wide regardless of
-	// canMinimize/minimized state.
+	// distinguish from an unfocused pane. A different marker per focused
+	// state ("● " content, "▶ " title bar) for the same reason the CMD
+	// tag exists. Fixed-width so the rest of the label doesn't shift
+	// left/right as focus moves, the same reason chevron above is always
+	// 2 runes wide regardless of canMinimize/minimized state.
 	focusMarker := "  "
-	if m.paneHasFocus(id) {
+	switch {
+	case titleFocused:
+		focusMarker = "▶ "
+	case contentFocused:
 		focusMarker = "● "
 	}
 	label = focusMarker + label
@@ -1296,7 +1319,14 @@ func (m Model) paneNode(p *paneState, number int, canMinimize bool) tui.Node {
 		).Key(paneKey(id, "box"))
 	}
 
+	// The frame lights up in the focus color while the content has
+	// focus, outlining where keys go; on the title bar only the bar
+	// itself is lit, so in both states the highlighted part is the
+	// part that receives keystrokes.
 	borderStyle := cell.Style{Bg: m.theme.Border}
+	if contentFocused {
+		borderStyle.Bg = m.theme.Focus
+	}
 	corner := func(part string, r rune) tui.Node { return divider(paneKey(id, part), borderStyle, r) }
 	return tui.Box(layout.Vertical,
 		tui.Child(layout.Length(1), tui.Box(layout.Horizontal,
@@ -1385,6 +1415,13 @@ func (m Model) SetFocusedKey(key any) {
 	}
 	s, _ := key.(string)
 	*m.focusedKey = s
+}
+
+// titleHasFocus reports whether pane id's own title bar is the widget
+// holding keyboard focus (as opposed to paneHasFocus, which is also
+// true while its content has it).
+func (m Model) titleHasFocus(id int) bool {
+	return m.focusedKey != nil && *m.focusedKey == paneKey(id, "title")
 }
 
 // paneHasFocus reports whether the most recently reported FocusAware

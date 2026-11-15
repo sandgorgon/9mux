@@ -8,6 +8,16 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- It's now clear whether a pane's content or its title bar has focus.
+  With the title bar focused (CMD mode), the title shows a `▶` marker, a
+  `CMD` tag, the command keys and `Esc back`. With the content focused, it
+  shows a `●` marker and only the way into CMD mode (`Ctrl+\ commands`,
+  or `Shift+Tab commands` in a browsing pane), and the pane's frame is
+  lit in the focus colour. The command keys are no longer listed while
+  your typing goes to the program, and unfocused panes show no hints.
+
 ## [0.2.4] - 2026-10-09
 
 ### Changed
