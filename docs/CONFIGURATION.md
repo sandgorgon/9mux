@@ -66,8 +66,8 @@ picks that this split will be a browsing pane, then `d` or `r` (or
 anything else to cancel) picks its direction, splitting off a browsing
 pane pointed at exactly that address. No separate `browse` preset to
 hand-write or keep in sync. `b` only shows up in a pane's title-bar
-hint when its preset declared a companion; it's a no-op everywhere
-else.
+command list (shown while the title bar has focus, in CMD mode) when
+its preset declared a companion; it's a no-op everywhere else.
 
 See [../README.md](../README.md) for how to use a browsing pane once
 you have one open, and [NUANCES.md](NUANCES.md) for the structural

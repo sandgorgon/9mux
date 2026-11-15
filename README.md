@@ -59,6 +59,9 @@ pane running `$SHELL` and nothing else to set up (see
 
 - Press **`?`** any time to open 9mux's built-in help screen (the
   keybindings below, always up to date, always in your terminal).
+- Press **`Ctrl+\`** to move from a pane into its title bar (CMD mode:
+  the title shows `▶` and a `CMD` tag, and letters become commands);
+  **`Esc`** goes back into the pane.
 - Press **`d`** or **`r`** on a pane's title bar to split it, then a
   digit to pick what runs in the new pane.
 - Press **`x`** on a pane's title bar to close it.
@@ -200,8 +203,8 @@ kyu = 9sh --listen-unix /tmp/9sh-$MUX_PID-{id}.sock
 kyu.browse = unix:/tmp/9sh-$MUX_PID-{id}.sock
 ```
 
-Open a `kyu` pane, then press `b` on its title bar (only shown because
-this preset has a companion), then `d` or `r` for a direction: a
+Open a `kyu` pane, then press `b` on its title bar (listed among its
+CMD-mode keys only because this preset has a companion), then `d` or `r` for a direction: a
 browsing pane splits off, pointed at exactly that `kyu` pane's own
 socket. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for how the
 `{id}`/`$MUX_PID` template expansion works and more examples.
